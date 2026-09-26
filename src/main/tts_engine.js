@@ -1,8 +1,7 @@
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
 /**
- * Synthesizes ultra high quality natural human voices via Microsoft Edge Neural TTS.
- * 100% Free, no API tokens or billing required.
+ * Synthesizes natural human voices via Microsoft Edge Neural TTS (v2.x).
  */
 async function synthesizeAudioStream(text, voice = 'en-US-AriaNeural') {
   return new Promise(async (resolve, reject) => {
@@ -10,17 +9,24 @@ async function synthesizeAudioStream(text, voice = 'en-US-AriaNeural') {
       const tts = new MsEdgeTTS();
       await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
 
-      const readable = tts.toStream(text);
+      const streamResult = tts.toStream(text);
+      // v2.x returns { audioStream }, fallback if direct stream
+      const readable = streamResult.audioStream || streamResult;
       const chunks = [];
 
       readable.on('data', (chunk) => {
         chunks.push(chunk);
       });
 
-      readable.on('end', () => {
-        const audioBuffer = Buffer.concat(chunks);
-        resolve(audioBuffer.toString('base64'));
-      });
+      const handleFinish = () => {
+        if (chunks.length > 0) {
+          const audioBuffer = Buffer.concat(chunks);
+          resolve(audioBuffer.toString('base64'));
+        }
+      };
+
+      readable.on('close', handleFinish);
+      readable.on('end', handleFinish);
 
       readable.on('error', (err) => {
         reject(err);
