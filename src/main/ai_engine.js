@@ -2,58 +2,58 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA (Neural Operating Voice Assistant), an advanced, high-tech desktop intelligence.
-Your task is to parse user intents and return a STRICT JSON output containing actions and spoken response.
+You are NOVA, an advanced Neural Desktop Operating Voice Assistant.
+You have direct, full control over the user's PC operating system and vision of their screen.
 
 Capabilities:
-1. OPEN_BROWSER: Open URLs or search YouTube/Google (payload: { "url": "https://www.youtube.com", "query": "The Hasnain Gaming" })
-2. CREATE_FILE: Generate code and save files directly to the host machine (payload: { "filename": "index.html", "content": "..." })
-3. RUN_COMMAND: Run safe system scripts.
+1. OPEN_APP: Launch desktop applications (e.g. payload: { "name": "notepad" }, or "calc", "chrome", "code", "cmd", "explorer", "taskmgr").
+2. OPEN_BROWSER: Open URLs or search YouTube/Google (payload: { "url": "https://www.youtube.com", "query": "The Hasnain Gaming" }).
+3. CREATE_FILE: Write project files directly to Desktop (payload: { "filename": "index.html", "content": "..." }).
+4. RUN_COMMAND: Execute shell commands or PowerShell scripts on the PC (payload: { "cmd": "dir" }).
 
-Always respond in this JSON schema ONLY:
+Respond ONLY in this JSON format:
 {
-  "spokenResponse": "Sir, I have prepared index.html on your Desktop and navigated to YouTube.",
+  "spokenResponse": "Sir, I have opened YouTube and launched Chrome.",
   "actions": [
     {
-      "type": "OPEN_BROWSER",
-      "payload": {
-        "url": "https://www.youtube.com",
-        "query": "The Hasnain Gaming"
-      }
-    },
-    {
-      "type": "CREATE_FILE",
-      "payload": {
-        "filename": "index.html",
-        "content": "<!DOCTYPE html><html><body><h1>NOVA Initialized</h1></body></html>"
-      }
+      "type": "OPEN_APP",
+      "payload": { "name": "chrome" }
     }
   ]
 }
-If no OS actions are required, actions must be an empty array [].
-Keep your spokenResponse crisp, professional, futuristic, and concise.
+If no OS actions are needed, keep "actions": [].
+Always keep your spokenResponse natural, polite, confident, and professional.
 `;
 
-async function runAIInference(userPrompt, imageBase64, config) {
+async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
   const provider = config.provider || 'gemini';
 
-  // Google Gemini Engine (Supports any custom model typed by user)
   if (provider === 'gemini') {
-    if (!config.geminiKey) throw new Error('Gemini API key is not configured in Settings.');
-    
+    if (!config.geminiKey) {
+      throw new Error('Gemini API key is not configured. Please open Settings and enter your API Key.');
+    }
+
     const genAI = new GoogleGenerativeAI(config.geminiKey);
-    // Directly uses whichever model the user typed or set (defaults to gemini-2.5-flash)
-    const selectedModel = config.geminiModel && config.geminiModel.trim() !== '' 
-      ? config.geminiModel.trim() 
-      : 'gemini-2.5-flash';
 
-    const model = genAI.getGenerativeModel({
-      model: selectedModel,
-      systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig: { responseMimeType: 'application/json' }
-    });
+    // Normalize model name (supports 3.8 and 3.5 presets)
+    let requestedModel = (config.geminiModel || 'gemini-3.8-flash').trim();
+    if (requestedModel === '3.8') requestedModel = 'gemini-3.8-flash';
+    if (requestedModel === '3.5') requestedModel = 'gemini-3.5-flash';
 
-    const parts = [userPrompt];
+    const parts = [];
+
+    // Attach Voice Audio if user spoke into mic
+    if (audioBase64) {
+      parts.push({
+        inlineData: {
+          mimeType: 'audio/webm',
+          data: audioBase64
+        }
+      });
+      parts.push('Listen to this voice directive from the user, interpret the intent, and execute requested actions.');
+    }
+
+    // Attach Screen Vision if active
     if (imageBase64) {
       parts.push({
         inlineData: {
@@ -61,54 +61,65 @@ async function runAIInference(userPrompt, imageBase64, config) {
           data: imageBase64
         }
       });
+      parts.push('This is the current screen of the user PC. Use it as context.');
     }
 
-    const result = await model.generateContent(parts);
-    const responseText = result.response.text();
-    return JSON.parse(responseText);
+    if (userPrompt) {
+      parts.push(userPrompt);
+    }
+
+    // Try primary model with automatic fallback to stable model if 404 occurs
+    try {
+      const model = genAI.getGenerativeModel({
+        model: requestedModel,
+        systemInstruction: SYSTEM_INSTRUCTION,
+        generationConfig: { responseMimeType: 'application/json' }
+      });
+      const result = await model.generateContent(parts);
+      return JSON.parse(result.response.text());
+    } catch (modelErr) {
+      if (modelErr.message.includes('404') || modelErr.message.includes('not found')) {
+        // Fallback to gemini-2.0-flash automatically
+        const fallback = genAI.getGenerativeModel({
+          model: 'gemini-2.0-flash',
+          systemInstruction: SYSTEM_INSTRUCTION,
+          generationConfig: { responseMimeType: 'application/json' }
+        });
+        const result = await fallback.generateContent(parts);
+        return JSON.parse(result.response.text());
+      }
+      throw modelErr;
+    }
   }
 
-  // OpenAI / Custom Gateway Engine
+  // OpenAI / Custom Gateway (Ollama, Groq, DeepSeek)
   const clientOptions = {
-    apiKey: provider === 'openai' ? config.openaiKey : (config.customKey || 'ollama-dummy')
+    apiKey: provider === 'openai' ? config.openaiKey : (config.customKey || 'dummy-key')
   };
-
   if (provider === 'custom') {
     clientOptions.baseURL = config.customBaseURL || 'http://localhost:11434/v1';
   }
 
-  if (!clientOptions.apiKey && provider === 'openai') {
-    throw new Error('OpenAI API key is missing.');
-  }
-
   const client = new OpenAI(clientOptions);
-  const selectedModel = provider === 'openai' 
-    ? (config.openaiModel || 'gpt-4o') 
-    : (config.customModel || 'llama3.2');
+  const selectedModel = provider === 'openai' ? (config.openaiModel || 'gpt-4o') : config.customModel;
 
-  const messages = [
-    { role: 'system', content: SYSTEM_INSTRUCTION }
-  ];
+  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
+  const contentArray = [];
 
+  if (userPrompt) contentArray.push({ type: 'text', text: userPrompt });
   if (imageBase64) {
-    messages.push({
-      role: 'user',
-      content: [
-        { type: 'text', text: userPrompt },
-        {
-          type: 'image_url',
-          image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-        }
-      ]
+    contentArray.push({
+      type: 'image_url',
+      image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
     });
-  } else {
-    messages.push({ role: 'user', content: userPrompt });
   }
+
+  messages.push({ role: 'user', content: contentArray });
 
   const completion = await client.chat.completions.create({
     model: selectedModel,
     messages,
-    response_format: { type: "json_object" }
+    response_format: { type: 'json_object' }
   });
 
   return JSON.parse(completion.choices[0].message.content);
