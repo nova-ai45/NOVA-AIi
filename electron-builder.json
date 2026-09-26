@@ -12,7 +12,6 @@
     "package.json"
   ],
   "win": {
-    "target": "dir",
-    "icon": "public/favicon.ico"
+    "target": "dir"
   }
 }
