@@ -1,7 +1,7 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { executeAction, openBrowserTarget, createDesktopFile } = require('./automation');
+const { executeAction, openBrowserTarget, createDesktopFile, launchApplication, runSystemCommand } = require('./automation');
 const { captureActiveDisplay } = require('./vision');
 const { synthesizeAudioStream } = require('./tts_engine');
 const { runAIInference } = require('./ai_engine');
@@ -12,14 +12,15 @@ const SETTINGS_FILE = path.join(app.getPath('userData'), 'nova_config.json');
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-2.5-flash', // Updated to current Google Gemini model
+  geminiModel: 'gemini-3.8-flash', // Default set to 3.8
   openaiKey: '',
   openaiModel: 'gpt-4o',
   customBaseURL: 'http://localhost:11434/v1',
   customKey: '',
   customModel: 'llama3.2',
   voice: 'en-US-AriaNeural',
-  autoSpeak: true
+  autoSpeak: true,
+  autoVision: true
 };
 
 function readSettings() {
@@ -29,8 +30,7 @@ function readSettings() {
       return DEFAULT_SETTINGS;
     }
     const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
-    // Ensure geminiModel is not empty
-    if (!data.geminiModel) data.geminiModel = 'gemini-2.5-flash';
+    if (!data.geminiModel) data.geminiModel = 'gemini-3.8-flash';
     return data;
   } catch (err) {
     return DEFAULT_SETTINGS;
@@ -64,8 +64,8 @@ function broadcastState(state) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1320,
-    height: 870,
+    width: 1340,
+    height: 880,
     minWidth: 1080,
     minHeight: 740,
     backgroundColor: '#040711',
@@ -88,6 +88,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Grant microphone & display capture permissions explicitly
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(true);
+  });
+  session.defaultSession.setPermissionCheckHandler(() => true);
+
   createWindow();
 
   ipcMain.handle('nova:getSettings', () => readSettings());
@@ -95,12 +101,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle('nova:captureScreen', async () => {
     try {
-      broadcastLog('vision', 'Capturing multi-monitor primary buffer...');
       const screenshotBase64 = await captureActiveDisplay();
-      broadcastLog('vision', 'Visual surface buffer captured successfully.');
       return { success: true, imageBase64: screenshotBase64 };
     } catch (e) {
-      broadcastLog('error', `Vision capture fault: ${e.message}`);
       return { success: false, error: e.message };
     }
   });
@@ -111,37 +114,35 @@ app.whenReady().then(() => {
       const settings = readSettings();
       const selectedVoice = voice || settings.voice || 'en-US-AriaNeural';
       const base64Audio = await synthesizeAudioStream(text, selectedVoice);
-      broadcastLog('tts', `Speech generated via Neural Voice [${selectedVoice}]`);
       return { success: true, base64Audio };
     } catch (err) {
-      broadcastLog('error', `TTS synthesis error: ${err.message}`);
       return { success: false, error: err.message };
     }
   });
 
-  ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir }) => {
-    return await createDesktopFile(filename, content, targetDir, broadcastLog);
-  });
-
-  ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery }) => {
-    return await openBrowserTarget(url, searchQuery, broadcastLog);
-  });
-
-  ipcMain.handle('nova:processCommand', async (_, { text, includeVision }) => {
+  // Master Orchestration Engine
+  ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, includeVision }) => {
+    const config = readSettings();
     try {
-      const config = readSettings();
       broadcastState('processing');
-      broadcastLog('command', `User Directive: "${text}"`);
 
+      // Auto Screen Capture if enabled
       let visionData = null;
       if (includeVision) {
-        broadcastLog('vision', 'Perceiving desktop screen context...');
+        broadcastLog('vision', 'Screen context captured for analysis.');
         visionData = await captureActiveDisplay();
       }
 
-      broadcastLog('ai', `Routing to [${config.provider.toUpperCase()}] :: Model [${config.geminiModel || config.openaiModel || config.customModel}]`);
-      const aiResponse = await runAIInference(text, visionData, config);
+      if (text) {
+        broadcastLog('command', `User: "${text}"`);
+      } else if (audioBase64) {
+        broadcastLog('command', 'User: [Voice Audio Input Transmitted]');
+      }
 
+      broadcastLog('ai', `Analyzing via [${config.provider.toUpperCase()}] Model: ${config.geminiModel}`);
+      const aiResponse = await runAIInference(text, audioBase64, visionData, config);
+
+      // Execute PC System Actions
       if (aiResponse.actions && Array.isArray(aiResponse.actions)) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -149,6 +150,7 @@ app.whenReady().then(() => {
         }
       }
 
+      // Generate Speech Response
       let audioResult = null;
       if (config.autoSpeak && aiResponse.spokenResponse) {
         broadcastState('speaking');
@@ -164,8 +166,21 @@ app.whenReady().then(() => {
       };
     } catch (err) {
       broadcastState('idle');
-      broadcastLog('error', `Execution error: ${err.message}`);
-      return { success: false, error: err.message };
+      const spokenError = `Sir, an error occurred. ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
+      broadcastLog('error', `NOVA Execution Fault: ${err.message}`);
+
+      // Speak the exact error aloud so the user knows what happened
+      let errorAudio = null;
+      try {
+        errorAudio = await synthesizeAudioStream(spokenError, config.voice || 'en-US-AriaNeural');
+      } catch (_) {}
+
+      return {
+        success: false,
+        error: err.message,
+        spokenResponse: spokenError,
+        audioBase64: errorAudio
+      };
     }
   });
 
