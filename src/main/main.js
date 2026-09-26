@@ -10,15 +10,15 @@ let mainWindow = null;
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'nova_config.json');
 
 const DEFAULT_SETTINGS = {
-  provider: 'gemini', // 'gemini' | 'openai' | 'custom'
+  provider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-1.5-flash',
+  geminiModel: 'gemini-2.5-flash', // Updated to current Google Gemini model
   openaiKey: '',
   openaiModel: 'gpt-4o',
   customBaseURL: 'http://localhost:11434/v1',
   customKey: '',
-  customModel: 'llama3:latest',
-  voice: 'en-US-AriaNeural', // msedge-tts natural voice
+  customModel: 'llama3.2',
+  voice: 'en-US-AriaNeural',
   autoSpeak: true
 };
 
@@ -28,7 +28,10 @@ function readSettings() {
       fs.writeFileSync(SETTINGS_FILE, JSON.stringify(DEFAULT_SETTINGS, null, 2));
       return DEFAULT_SETTINGS;
     }
-    return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
+    // Ensure geminiModel is not empty
+    if (!data.geminiModel) data.geminiModel = 'gemini-2.5-flash';
+    return data;
   } catch (err) {
     return DEFAULT_SETTINGS;
   }
@@ -61,11 +64,11 @@ function broadcastState(state) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 850,
-    minWidth: 1024,
-    minHeight: 720,
-    backgroundColor: '#050811',
+    width: 1320,
+    height: 870,
+    minWidth: 1080,
+    minHeight: 740,
+    backgroundColor: '#040711',
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, '../preload.js'),
@@ -87,7 +90,6 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
-  // IPC Handlers
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
@@ -129,20 +131,17 @@ app.whenReady().then(() => {
     try {
       const config = readSettings();
       broadcastState('processing');
-      broadcastLog('command', `User: "${text}"`);
+      broadcastLog('command', `User Directive: "${text}"`);
 
       let visionData = null;
       if (includeVision) {
-        broadcastLog('vision', 'Executing screen perception routine...');
+        broadcastLog('vision', 'Perceiving desktop screen context...');
         visionData = await captureActiveDisplay();
       }
 
-      // Step 1: Query LLM Router
-      broadcastLog('ai', `Querying provider engine [${config.provider.toUpperCase()}]...`);
+      broadcastLog('ai', `Routing to [${config.provider.toUpperCase()}] :: Model [${config.geminiModel || config.openaiModel || config.customModel}]`);
       const aiResponse = await runAIInference(text, visionData, config);
-      broadcastLog('ai', `Parsed Model Directive: ${JSON.stringify(aiResponse.actions || {})}`);
 
-      // Step 2: Execute Automation Directives
       if (aiResponse.actions && Array.isArray(aiResponse.actions)) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -150,7 +149,6 @@ app.whenReady().then(() => {
         }
       }
 
-      // Step 3: Neural Voice Response
       let audioResult = null;
       if (config.autoSpeak && aiResponse.spokenResponse) {
         broadcastState('speaking');
@@ -166,7 +164,7 @@ app.whenReady().then(() => {
       };
     } catch (err) {
       broadcastState('idle');
-      broadcastLog('error', `Command execution halted: ${err.message}`);
+      broadcastLog('error', `Execution error: ${err.message}`);
       return { success: false, error: err.message };
     }
   });
