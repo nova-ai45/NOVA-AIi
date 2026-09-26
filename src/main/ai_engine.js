@@ -3,46 +3,49 @@ const OpenAI = require('openai');
 
 const SYSTEM_INSTRUCTION = `
 You are NOVA, an advanced Neural Desktop Operating Voice Assistant.
-You have direct, full control over the user's PC operating system and vision of their screen.
+You have direct control over the user's PC operating system and live screen vision.
+
+IMPORTANT LANGUAGE DIRECTIVE:
+- Always respond in natural, polite, and fluent conversational Urdu / Hindi (using Roman Urdu/Hindi or native Urdu script, e.g. "جی سر، میں نے یوٹیوب اوپن کر کے The Hasnain Gaming سرچ کر دیا ہے۔" or "Jee Sir, maine Chrome me YouTube open kar diya hai.").
+- Never give long, robotic speeches. Keep responses crisp, fast, and helpful.
+- If the user talks to you in English, you can reply in English. If they talk in Urdu/Hindi, reply in Urdu/Hindi.
 
 Capabilities:
-1. OPEN_APP: Launch desktop applications (e.g. payload: { "name": "notepad" }, or "calc", "chrome", "code", "cmd", "explorer", "taskmgr").
+1. OPEN_APP: Launch desktop applications (payload: { "name": "notepad" }, or "calc", "chrome", "code", "cmd", "explorer", "taskmgr").
 2. OPEN_BROWSER: Open URLs or search YouTube/Google (payload: { "url": "https://www.youtube.com", "query": "The Hasnain Gaming" }).
 3. CREATE_FILE: Write project files directly to Desktop (payload: { "filename": "index.html", "content": "..." }).
 4. RUN_COMMAND: Execute shell commands or PowerShell scripts on the PC (payload: { "cmd": "dir" }).
 
 Respond ONLY in this JSON format:
 {
-  "spokenResponse": "Sir, I have opened YouTube and launched Chrome.",
+  "spokenResponse": "جی سر، میں نے یوٹیوب اوپن کر دیا ہے۔",
   "actions": [
     {
-      "type": "OPEN_APP",
-      "payload": { "name": "chrome" }
+      "type": "OPEN_BROWSER",
+      "payload": {
+        "url": "https://www.youtube.com",
+        "query": "The Hasnain Gaming"
+      }
     }
   ]
 }
 If no OS actions are needed, keep "actions": [].
-Always keep your spokenResponse natural, polite, confident, and professional.
 `;
 
 async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
   const provider = config.provider || 'gemini';
 
+  // 1. Google Gemini Native Engine
   if (provider === 'gemini') {
     if (!config.geminiKey) {
-      throw new Error('Gemini API key is not configured. Please open Settings and enter your API Key.');
+      throw new Error('Gemini API کی موجود نہیں ہے۔ برائے مہربانی سیٹنگز میں جا کر API کی درج کریں۔');
     }
 
     const genAI = new GoogleGenerativeAI(config.geminiKey);
-
-    // Normalize model name (supports 3.8 and 3.5 presets)
-    let requestedModel = (config.geminiModel || 'gemini-3.8-flash').trim();
-    if (requestedModel === '3.8') requestedModel = 'gemini-3.8-flash';
-    if (requestedModel === '3.5') requestedModel = 'gemini-3.5-flash';
+    const modelName = (config.geminiModel || 'gemini-2.0-flash').trim();
 
     const parts = [];
 
-    // Attach Voice Audio if user spoke into mic
     if (audioBase64) {
       parts.push({
         inlineData: {
@@ -50,10 +53,9 @@ async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
           data: audioBase64
         }
       });
-      parts.push('Listen to this voice directive from the user, interpret the intent, and execute requested actions.');
+      parts.push('User spoke to you in voice. Understand their intent (which may be in Urdu, Hindi, or English) and fulfill the request.');
     }
 
-    // Attach Screen Vision if active
     if (imageBase64) {
       parts.push({
         inlineData: {
@@ -64,24 +66,21 @@ async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
       parts.push('This is the current screen of the user PC. Use it as context.');
     }
 
-    if (userPrompt) {
-      parts.push(userPrompt);
-    }
+    if (userPrompt) parts.push(userPrompt);
 
-    // Try primary model with automatic fallback to stable model if 404 occurs
     try {
       const model = genAI.getGenerativeModel({
-        model: requestedModel,
+        model: modelName,
         systemInstruction: SYSTEM_INSTRUCTION,
         generationConfig: { responseMimeType: 'application/json' }
       });
       const result = await model.generateContent(parts);
       return JSON.parse(result.response.text());
     } catch (modelErr) {
+      // Auto-fallback if the specified model is not available
       if (modelErr.message.includes('404') || modelErr.message.includes('not found')) {
-        // Fallback to gemini-2.0-flash automatically
         const fallback = genAI.getGenerativeModel({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-1.5-flash',
           systemInstruction: SYSTEM_INSTRUCTION,
           generationConfig: { responseMimeType: 'application/json' }
         });
@@ -92,21 +91,34 @@ async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
     }
   }
 
-  // OpenAI / Custom Gateway (Ollama, Groq, DeepSeek)
-  const clientOptions = {
-    apiKey: provider === 'openai' ? config.openaiKey : (config.customKey || 'dummy-key')
-  };
+  // 2. Custom AI Gateway or OpenAI (Works with Groq, DeepSeek, Ollama, OpenRouter, xkiro, etc.)
+  const clientOptions = {};
+
   if (provider === 'custom') {
     clientOptions.baseURL = config.customBaseURL || 'http://localhost:11434/v1';
+    clientOptions.apiKey = config.customKey || 'dummy-key';
+  } else {
+    clientOptions.apiKey = config.openaiKey;
+  }
+
+  if (!clientOptions.apiKey && provider === 'openai') {
+    throw new Error('OpenAI API کی موجود نہیں ہے۔');
   }
 
   const client = new OpenAI(clientOptions);
-  const selectedModel = provider === 'openai' ? (config.openaiModel || 'gpt-4o') : config.customModel;
+  const selectedModel = provider === 'openai' 
+    ? (config.openaiModel || 'gpt-4o') 
+    : (config.customModel || 'llama-3.3-70b-versatile');
 
   const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
   const contentArray = [];
 
-  if (userPrompt) contentArray.push({ type: 'text', text: userPrompt });
+  if (userPrompt) {
+    contentArray.push({ type: 'text', text: userPrompt });
+  } else if (audioBase64) {
+    contentArray.push({ type: 'text', text: 'Voice directive received. Execute system actions.' });
+  }
+
   if (imageBase64) {
     contentArray.push({
       type: 'image_url',
