@@ -8,37 +8,53 @@ function getDesktopDirectory() {
 }
 
 /**
- * Creates files safely on the host machine.
+ * Creates files directly on PC Desktop
  */
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
   try {
-    const baseDir = targetDirectory ? targetDirectory : getDesktopDirectory();
+    const baseDir = targetDirectory || getDesktopDirectory();
     if (!fs.existsSync(baseDir)) {
       fs.mkdirSync(baseDir, { recursive: true });
     }
     const fullPath = path.join(baseDir, fileName);
     fs.writeFileSync(fullPath, fileContent, 'utf-8');
-    logCallback('automation', `File deployed to disk: ${fullPath}`);
+    logCallback('automation', `Created file on Desktop: ${fileName}`);
     return { success: true, path: fullPath };
   } catch (err) {
-    logCallback('error', `File generation failure: ${err.message}`);
+    logCallback('error', `Failed to create file: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
 
 /**
- * Native cross-platform web navigation & query injection.
+ * Launch Any Windows App (Notepad, Chrome, VS Code, Calc, Explorer, etc.)
+ */
+async function launchApplication(appName, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    logCallback('automation', `Launching PC App: ${appName}`);
+    exec(`start ${appName}`, (err) => {
+      if (err) {
+        logCallback('error', `Could not open ${appName}: ${err.message}`);
+        resolve({ success: false, error: err.message });
+      } else {
+        logCallback('automation', `Successfully launched ${appName}`);
+        resolve({ success: true });
+      }
+    });
+  });
+}
+
+/**
+ * Native Browser Launch & Auto Search
  */
 async function openBrowserTarget(url, searchQuery = null, logCallback = () => {}) {
   try {
-    let finalUrl = url;
+    let finalUrl = url || 'https://www.google.com';
     if (searchQuery) {
-      if (url.includes('youtube.com')) {
+      if (finalUrl.includes('youtube.com')) {
         finalUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`;
-      } else if (url.includes('google.com')) {
-        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
       } else {
-        finalUrl = `${url.replace(/\/$/, '')}/search?q=${encodeURIComponent(searchQuery)}`;
+        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
       }
     }
 
@@ -46,65 +62,54 @@ async function openBrowserTarget(url, searchQuery = null, logCallback = () => {}
       finalUrl = 'https://' + finalUrl;
     }
 
-    logCallback('automation', `Initiating browser handshake: ${finalUrl}`);
+    logCallback('automation', `Navigating to: ${finalUrl}`);
     await shell.openExternal(finalUrl);
-
-    // Optional Windows Keystroke automation via PowerShell
-    if (process.platform === 'win32' && searchQuery && !url.includes('results?') && !url.includes('?q=')) {
-      setTimeout(() => {
-        const psScript = `
-          Add-Type -AssemblyName System.Windows.Forms;
-          Start-Sleep -Milliseconds 800;
-          [System.Windows.Forms.SendKeys]::SendWait('${searchQuery.replace(/'/g, "''")}');
-          [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
-        `;
-        exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`);
-      }, 1500);
-    }
-
     return { success: true, launchedUrl: finalUrl };
   } catch (err) {
-    logCallback('error', `Browser automation exception: ${err.message}`);
+    logCallback('error', `Browser error: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
 
 /**
- * Universal Action Dispatcher
+ * Universal OS Action Router
  */
 async function executeAction(actionObj, logCallback = () => {}) {
   const { type, payload } = actionObj;
   logCallback('system', `Executing Directive: [${type}]`);
 
   switch (type) {
-    case 'CREATE_FILE':
-      return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
+    case 'OPEN_APP':
+      return await launchApplication(payload.name, logCallback);
 
     case 'OPEN_BROWSER':
       return await openBrowserTarget(payload.url, payload.query, logCallback);
 
+    case 'CREATE_FILE':
+      return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
+
     case 'RUN_COMMAND':
       return new Promise((resolve) => {
-        logCallback('system', `Shell Command: ${payload.cmd}`);
-        exec(payload.cmd, (err, stdout, stderr) => {
+        exec(payload.cmd, (err, stdout) => {
           if (err) {
-            logCallback('error', `Shell Error: ${stderr || err.message}`);
-            resolve({ success: false, error: stderr || err.message });
+            logCallback('error', `Shell: ${err.message}`);
+            resolve({ success: false, error: err.message });
           } else {
-            logCallback('automation', `Shell Output: ${stdout.trim()}`);
+            logCallback('automation', `Output: ${stdout.trim()}`);
             resolve({ success: true, output: stdout });
           }
         });
       });
 
     default:
-      logCallback('warning', `Unknown action type: ${type}`);
-      return { success: false, error: 'Unrecognized action directive.' };
+      logCallback('warning', `Unknown action: ${type}`);
+      return { success: false };
   }
 }
 
 module.exports = {
   createDesktopFile,
+  launchApplication,
   openBrowserTarget,
   executeAction
 };
