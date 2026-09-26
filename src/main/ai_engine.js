@@ -6,9 +6,9 @@ You are NOVA (Neural Operating Voice Assistant), an advanced, high-tech desktop 
 Your task is to parse user intents and return a STRICT JSON output containing actions and spoken response.
 
 Capabilities:
-1. OPEN_BROWSER: Open URLs or search YouTube/Google (e.g. payload: { "url": "https://www.youtube.com", "query": "The Hasnain Gaming" })
-2. CREATE_FILE: Generate code and save files directly to the host machine (e.g. payload: { "filename": "index.html", "content": "..." })
-3. RUN_COMMAND: Run standard shell scripts.
+1. OPEN_BROWSER: Open URLs or search YouTube/Google (payload: { "url": "https://www.youtube.com", "query": "The Hasnain Gaming" })
+2. CREATE_FILE: Generate code and save files directly to the host machine (payload: { "filename": "index.html", "content": "..." })
+3. RUN_COMMAND: Run safe system scripts.
 
 Always respond in this JSON schema ONLY:
 {
@@ -30,18 +30,25 @@ Always respond in this JSON schema ONLY:
     }
   ]
 }
-If no OS actions are required, actions should be an empty array [].
-Keep your spokenResponse crisp, professional, futuristic, and helpful.
+If no OS actions are required, actions must be an empty array [].
+Keep your spokenResponse crisp, professional, futuristic, and concise.
 `;
 
 async function runAIInference(userPrompt, imageBase64, config) {
   const provider = config.provider || 'gemini';
 
+  // Google Gemini Engine (Supports any custom model typed by user)
   if (provider === 'gemini') {
-    if (!config.geminiKey) throw new Error('Gemini API key is not configured.');
+    if (!config.geminiKey) throw new Error('Gemini API key is not configured in Settings.');
+    
     const genAI = new GoogleGenerativeAI(config.geminiKey);
+    // Directly uses whichever model the user typed or set (defaults to gemini-2.5-flash)
+    const selectedModel = config.geminiModel && config.geminiModel.trim() !== '' 
+      ? config.geminiModel.trim() 
+      : 'gemini-2.5-flash';
+
     const model = genAI.getGenerativeModel({
-      model: config.geminiModel || 'gemini-1.5-flash',
+      model: selectedModel,
       systemInstruction: SYSTEM_INSTRUCTION,
       generationConfig: { responseMimeType: 'application/json' }
     });
@@ -61,7 +68,7 @@ async function runAIInference(userPrompt, imageBase64, config) {
     return JSON.parse(responseText);
   }
 
-  // OpenAI or Custom Gateway (Groq, DeepSeek, Local Ollama, vLLM)
+  // OpenAI / Custom Gateway Engine
   const clientOptions = {
     apiKey: provider === 'openai' ? config.openaiKey : (config.customKey || 'ollama-dummy')
   };
@@ -75,7 +82,9 @@ async function runAIInference(userPrompt, imageBase64, config) {
   }
 
   const client = new OpenAI(clientOptions);
-  const selectedModel = provider === 'openai' ? (config.openaiModel || 'gpt-4o') : config.customModel;
+  const selectedModel = provider === 'openai' 
+    ? (config.openaiModel || 'gpt-4o') 
+    : (config.customModel || 'llama3.2');
 
   const messages = [
     { role: 'system', content: SYSTEM_INSTRUCTION }
@@ -102,8 +111,7 @@ async function runAIInference(userPrompt, imageBase64, config) {
     response_format: { type: "json_object" }
   });
 
-  const parsed = JSON.parse(completion.choices[0].message.content);
-  return parsed;
+  return JSON.parse(completion.choices[0].message.content);
 }
 
 module.exports = {
