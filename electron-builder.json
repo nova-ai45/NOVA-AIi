@@ -1,0 +1,18 @@
+{
+  "appId": "com.nova.neuralvoiceassistant",
+  "productName": "NOVA AI",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "src/main/**/*",
+    "src/preload.js",
+    "node_modules/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": "dir",
+    "icon": "public/favicon.ico"
+  }
+}
