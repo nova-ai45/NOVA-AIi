@@ -21,7 +21,6 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
       const centerX = width / 2;
       const centerY = height / 2;
 
-      // Dynamic states color & multiplier
       let coreColor = '#ff7b00';
       let ringColor = 'rgba(255, 130, 0, 0.7)';
       let glowColor = 'rgba(255, 120, 0, 0.4)';
@@ -46,7 +45,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
 
       angle += speed;
 
-      // 1. Background Grid & Radar Crosshairs
+      // 1. Background Grid Lines
       ctx.save();
       ctx.strokeStyle = 'rgba(255, 120, 0, 0.08)';
       ctx.lineWidth = 1;
@@ -64,12 +63,13 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
       }
       ctx.restore();
 
-      // 2. Central Concentric Glowing Amber Rings
+      // 2. Central Concentric Amber Rings
       const ringRadii = [40, 65, 88, 110];
       ringRadii.forEach((radius, idx) => {
         ctx.save();
         ctx.beginPath();
-        const pulse = state === 'speaking' || state === 'listening' ? Math.sin(Date.now() / 150 + idx) * 3 : 0;
+        // بولتے وقت دائرے ارتعاش کریں گے
+        const pulse = audioLevel > 0.25 ? Math.sin(Date.now() / 120 + idx) * (audioLevel * 8) : 0;
         ctx.arc(centerX, centerY, radius + pulse, 0, Math.PI * 2);
 
         if (idx === 1) {
@@ -77,7 +77,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
           ctx.strokeStyle = ringColor;
           ctx.lineWidth = 1.5;
         } else if (idx === 2) {
-          ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)'; // Subtle cyan contrast ring from image
+          ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)';
           ctx.lineWidth = 1.2;
         } else {
           ctx.strokeStyle = ringColor;
@@ -90,7 +90,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
         ctx.restore();
       });
 
-      // 3. Orbiting Nodes (Dots on rings from image)
+      // 3. Orbiting Nodes
       const orbitNodes = [
         { r: 65, spd: angle * 1.5, col: '#ffaa00' },
         { r: 88, spd: -angle * 1.2, col: '#00e5ff' },
@@ -109,9 +109,10 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
         ctx.restore();
       });
 
-      // 4. Horizontal Audio Equalizer Spectrum Passing Through Center
+      // 4. Horizontal Audio Equalizer Spectrum (طاقتور لائیو لہریں)
       ctx.save();
-      const waveAmplitude = state === 'speaking' ? audioLevel * 75 : state === 'listening' ? audioLevel * 45 : 8;
+      // جب آواز آئے گی تو لہریں اوپر نیچے اونچی ناچیں گی
+      const waveAmplitude = audioLevel > 0.22 ? audioLevel * 85 : 8;
       const barWidth = 3;
       const spacing = (width - 80) / waveformPoints;
 
@@ -119,29 +120,28 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
         const x = 40 + i * spacing;
         const distFromCenter = Math.abs(x - centerX);
 
-        // Suppress waveform inside the inner core circle
         if (distFromCenter < 35) continue;
 
         const factor = Math.sin((i / waveformPoints) * Math.PI);
-        const dynamicH = Math.max(3, Math.sin(angle * 4 + i * 0.4) * waveAmplitude * factor);
+        const dynamicH = Math.max(3, Math.sin(angle * 5 + i * 0.45) * waveAmplitude * factor);
 
         const grad = ctx.createLinearGradient(x, centerY - dynamicH, x, centerY + dynamicH);
-        grad.addColorStop(0, '#ff9900');
+        grad.addColorStop(0, '#ffaa00');
         grad.addColorStop(0.5, '#ff5500');
-        grad.addColorStop(1, '#ff9900');
+        grad.addColorStop(1, '#ffaa00');
 
         ctx.fillStyle = grad;
-        ctx.shadowColor = 'rgba(255, 120, 0, 0.7)';
-        ctx.shadowBlur = 6;
+        ctx.shadowColor = 'rgba(255, 120, 0, 0.8)';
+        ctx.shadowBlur = 8;
         ctx.fillRect(x, centerY - dynamicH, barWidth, dynamicH * 2);
       }
       ctx.restore();
 
-      // 5. Central Microphone Glow Field
+      // 5. Center Microphone Capsule
       ctx.save();
       ctx.beginPath();
       ctx.arc(centerX, centerY, 28, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(16, 18, 26, 0.85)';
+      ctx.fillStyle = 'rgba(16, 18, 26, 0.9)';
       ctx.strokeStyle = coreColor;
       ctx.lineWidth = 2;
       ctx.shadowColor = coreColor;
@@ -150,7 +150,6 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
       ctx.stroke();
       ctx.restore();
 
-      // Draw Center Microphone Icon via Path
       ctx.save();
       ctx.strokeStyle = coreColor;
       ctx.fillStyle = coreColor;
@@ -159,17 +158,14 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
       ctx.shadowColor = coreColor;
       ctx.shadowBlur = 10;
 
-      // Mic Capsule
       ctx.beginPath();
       ctx.roundRect(centerX - 4.5, centerY - 11, 9, 14, 4.5);
       ctx.stroke();
 
-      // Mic Stand Arc
       ctx.beginPath();
       ctx.arc(centerX, centerY - 4, 8, 0, Math.PI);
       ctx.stroke();
 
-      // Mic Stand Stem & Base
       ctx.beginPath();
       ctx.moveTo(centerX, centerY + 4);
       ctx.lineTo(centerX, centerY + 10);
