@@ -33,16 +33,98 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
 }
 
 /**
- * Smart Browser & YouTube Launcher
- * - Channel handles (@TheHasnainGamer1) are NEVER converted to search queries!
- * - YouTube Home is NEVER polluted with unwanted search queries!
- * - Dedicated Google Chrome launch
+ * Native Windows Mouse Clicker via PowerShell User32 DLL
+ * Moves the real mouse cursor to (x, y) and performs a physical left click.
+ */
+async function clickScreenCoordinates(x, y, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+
+    if (isNaN(posX) || isNaN(posY)) {
+      logCallback('error', `mouse.click: invalid coordinates (${x}, ${y})`);
+      return resolve({ success: false, error: 'Invalid coordinates' });
+    }
+
+    logCallback('automation', `mouse.click: moving to (${posX}, ${posY}) [CLICKING]`);
+
+    if (process.platform === 'win32') {
+      const psScript = `
+        Add-Type -AssemblyName System.Windows.Forms;
+        [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+        $code = @'
+        using System;
+        using System.Runtime.InteropServices;
+        public class MouseSimulator {
+            [DllImport("user32.dll")]
+            public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+        }
+'@
+        Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+        [MouseSimulator]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+        Start-Sleep -Milliseconds 60;
+        [MouseSimulator]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+      `;
+
+      exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, (err) => {
+        if (err) {
+          logCallback('error', `mouse.click_error: ${err.message}`);
+          resolve({ success: false, error: err.message });
+        } else {
+          resolve({ success: true, x: posX, y: posY });
+        }
+      });
+    } else {
+      resolve({ success: true });
+    }
+  });
+}
+
+/**
+ * Native Windows Mouse Wheel Scroll (Scroll Down / Scroll Up)
+ */
+async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const isDown = direction.toLowerCase() === 'down';
+    // Windows mouse_event wheel: negative for down, positive for up
+    const scrollDelta = isDown ? -120 * Math.max(1, amount) : 120 * Math.max(1, amount);
+
+    logCallback('automation', `mouse.scroll: ${direction.toUpperCase()} by ${amount} notches`);
+
+    if (process.platform === 'win32') {
+      const psScript = `
+        $code = @'
+        using System;
+        using System.Runtime.InteropServices;
+        public class WheelSimulator {
+            [DllImport("user32.dll")]
+            public static extern void mouse_event(uint dwFlags, uint dx, uint dy, int dwData, UIntPtr dwExtraInfo);
+        }
+'@
+        Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+        [WheelSimulator]::mouse_event(0x0800, 0, 0, ${scrollDelta}, [UIntPtr]::Zero);
+      `;
+
+      exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`, (err) => {
+        if (err) {
+          logCallback('error', `mouse.scroll_error: ${err.message}`);
+          resolve({ success: false, error: err.message });
+        } else {
+          resolve({ success: true, direction, amount });
+        }
+      });
+    } else {
+      resolve({ success: true });
+    }
+  });
+}
+
+/**
+ * Browser Target Launcher
  */
 async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
     let finalUrl = url || 'https://www.youtube.com';
-
-    // اگر لنک میں چینل ہینڈل (@) یا ڈائریکٹ ویڈیو ہے تو کبھی بھی سرچ کوئیری نہ بنائیں!
     const isDirectLink = finalUrl.includes('@') || finalUrl.includes('/watch') || finalUrl.includes('/channel/');
 
     if (!isDirectLink && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
@@ -58,9 +140,8 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
     }
 
     const requested = (browserName || 'chrome').toLowerCase();
-    logCallback('automation', `browser.launch(target="${finalUrl}", browser="${requested}")`);
+    logCallback('automation', `browser.launch: "${finalUrl}" in ${requested}`);
 
-    // ونڈوز پر براہِ راست گوگل کروم میں اوپن کریں
     if (process.platform === 'win32') {
       if (requested.includes('chrome')) {
         exec(`start chrome "${finalUrl}"`, (err) => {
@@ -84,58 +165,24 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
 }
 
 /**
- * Automates Clicking & Playing YouTube Videos without opening search tabs
- */
-async function playYouTubeVideoAction(actionType = 'first_video', logCallback = () => {}) {
-  try {
-    logCallback('automation', `youtube.action: "${actionType}" [EXECUTING]`);
-
-    if (process.platform === 'win32') {
-      if (actionType === 'first_video' || actionType === 'play_short') {
-        const psScript = `
-          Add-Type -AssemblyName System.Windows.Forms;
-          Start-Sleep -Milliseconds 600;
-          [System.Windows.Forms.SendKeys]::SendWait('{TAB 4}');
-          Start-Sleep -Milliseconds 250;
-          [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
-        `;
-        exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`);
-      } else {
-        const psScript = `
-          Add-Type -AssemblyName System.Windows.Forms;
-          Start-Sleep -Milliseconds 300;
-          [System.Windows.Forms.SendKeys]::SendWait('k');
-        `;
-        exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`);
-      }
-    }
-    return { success: true };
-  } catch (err) {
-    logCallback('error', `youtube.action_error: "${err.message}"`);
-    return { success: false, error: err.message };
-  }
-}
-
-/**
  * Universal Action Dispatcher
  */
 async function executeAction(actionObj, logCallback = () => {}) {
   const { type, payload } = actionObj;
-  logCallback('system', `executing.directive: [${type}]`);
+  logCallback('system', `executing.action: [${type}]`);
 
   switch (type) {
+    case 'CLICK_SCREEN':
+      return await clickScreenCoordinates(payload.x, payload.y, logCallback);
+
+    case 'SCROLL_SCREEN':
+      return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
+
     case 'CREATE_FILE':
       return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
 
     case 'OPEN_BROWSER':
       return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
-
-    case 'PLAY_FIRST_VIDEO':
-    case 'PLAY_YOUTUBE_VIDEO':
-      return await playYouTubeVideoAction(payload?.target || 'first_video', logCallback);
-
-    case 'MEDIA_CONTROL':
-      return await playYouTubeVideoAction('play_pause', logCallback);
 
     case 'OPEN_APP':
       return new Promise((resolve) => {
@@ -150,6 +197,19 @@ async function executeAction(actionObj, logCallback = () => {}) {
         });
       });
 
+    case 'RUN_COMMAND':
+      return new Promise((resolve) => {
+        exec(payload.cmd, (err, stdout, stderr) => {
+          if (err) {
+            logCallback('error', `shell.fault: ${stderr || err.message}`);
+            resolve({ success: false, error: stderr || err.message });
+          } else {
+            logCallback('automation', `shell.output: ${stdout.trim()}`);
+            resolve({ success: true, output: stdout });
+          }
+        });
+      });
+
     default:
       logCallback('warning', `unrecognized.action: "${type}"`);
       return { success: false };
@@ -157,6 +217,8 @@ async function executeAction(actionObj, logCallback = () => {}) {
 }
 
 module.exports = {
+  clickScreenCoordinates,
+  scrollScreen,
   createDesktopFile,
   openBrowserTarget,
   executeAction
