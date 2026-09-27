@@ -26,7 +26,6 @@ export default function App() {
   const [settings, setSettings] = useState({});
   const [audioLevel, setAudioLevel] = useState(0.18);
 
-  // Persistent Multi-Turn Conversation Memory Buffer
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('nova_chat_history');
@@ -47,19 +46,16 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState('');
   const [sysMetrics, setSysMetrics] = useState({ cpu: 12, ram: 44, disk: 31 });
 
-  // Real-time Voice Engine & Push-to-Talk Hotkey References
+  // Real-time voice engine references & 1.0s silence timer
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const accumulatedSpeechRef = useRef('');
   const isSpeechRunningRef = useRef(false);
   const isProcessingRef = useRef(false);
-  const currentAudioRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const animFrameRef = useRef(null);
+  const executionTokenRef = useRef(0);
   const canvasBgRef = useRef(null);
 
   useEffect(() => {
-    // Persist conversation history updates
     try {
       localStorage.setItem('nova_chat_history', JSON.stringify(chatHistory.slice(-20)));
     } catch (_) {}
@@ -107,19 +103,18 @@ export default function App() {
     const unsubState = window.novaAPI.onStateChange((st) => {
       setSphereState(st);
       if (st === 'thinking') {
-        setStatusMessage('JARVIS Thinking...');
+        setStatusMessage('NOVA is thinking...');
       } else if (st === 'executing') {
-        setStatusMessage('Executing automation...');
+        setStatusMessage('NOVA is executing...');
       } else if (st === 'speaking') {
         setStatusMessage('NOVA is speaking...');
       } else if (st === 'listening') {
-        setStatusMessage('Listening to your voice...');
+        setStatusMessage('NOVA is listening...');
       } else if (st === 'idle') {
         setStatusMessage('Listening...');
       }
     });
 
-    // IPC listener for OS Global Push-to-Talk Hotkey (Default: Alt+Space)
     const unsubHotkey = window.novaAPI.onHotkeyTrigger ? window.novaAPI.onHotkeyTrigger(() => {
       handleGlobalPushToTalkToggle();
     }) : () => {};
@@ -130,16 +125,10 @@ export default function App() {
       });
     }
 
-    if (window.novaAPI.onEarlyAudioChunk) {
-      window.novaAPI.onEarlyAudioChunk((audioBase64) => {
-        playEarlyAudioStream(audioBase64);
-      });
-    }
-
     if (window.novaAPI.onSystemShutdown) {
       window.novaAPI.onSystemShutdown(() => {
         destroySpeechRecognition();
-        cancelActiveSpeech();
+        cancelNativeSpeech();
       });
     }
 
@@ -158,17 +147,16 @@ export default function App() {
       unsubState();
       unsubHotkey();
       destroySpeechRecognition();
-      cancelActiveSpeech();
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      cancelNativeSpeech();
     };
   }, []);
 
-  // Global Push-to-Talk Hotkey Toggle Logic (Alt+Space)
+  // Global Push-to-Talk Hotkey Toggle
   const handleGlobalPushToTalkToggle = () => {
     if (isProcessingRef.current) return;
 
     if (isSpeechRunningRef.current) {
-      // Key pressed again -> Stop Recording & immediately Submit
+      // Hotkey pressed again -> finalize and submit accumulated speech
       const speech = accumulatedSpeechRef.current.trim();
       accumulatedSpeechRef.current = '';
       stopSpeechRecognition();
@@ -179,9 +167,8 @@ export default function App() {
         setStatusMessage('Listening...');
       }
     } else {
-      // Key pressed -> Start recording immediately
       accumulatedSpeechRef.current = '';
-      cancelActiveSpeech();
+      cancelNativeSpeech();
       startSpeechRecognition();
       setSphereState('listening');
       setStatusMessage(`NOVA: Listening [${settings.globalHotkey || 'Alt+Space'}]...`);
@@ -193,8 +180,8 @@ export default function App() {
     try {
       localStorage.removeItem('nova_chat_history');
     } catch (_) {}
-    setStatusMessage('Context memory purged.');
-    setTimeout(() => setStatusMessage('Listening...'), 1800);
+    setStatusMessage('Memory cleared.');
+    setTimeout(() => setStatusMessage('Listening...'), 1500);
   };
 
   const initBackgroundCanvasShader = () => {
@@ -268,12 +255,10 @@ export default function App() {
     };
   };
 
+  // Real-Time Speech Recognition Engine with 1.0-Second Silence Auto-Submit
   const initSpeechRecognitionEngine = () => {
     const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechConstructor) {
-      console.warn('SpeechRecognition API unsupported.');
-      return;
-    }
+    if (!SpeechConstructor) return;
 
     try {
       const recognition = new SpeechConstructor();
@@ -309,7 +294,7 @@ export default function App() {
             clearTimeout(silenceTimerRef.current);
           }
 
-          // Strict 900ms silence timeout auto-submit
+          // Automated 1.0-second silence timer: auto-submit query to AI
           silenceTimerRef.current = setTimeout(() => {
             const finalSpeech = accumulatedSpeechRef.current.trim();
             if (finalSpeech.length > 0 && !isProcessingRef.current) {
@@ -317,13 +302,13 @@ export default function App() {
               stopSpeechRecognition();
               handleExecute(finalSpeech);
             }
-          }, 900);
+          }, 1000);
         }
       };
 
       recognition.onerror = (e) => {
         if (e.error !== 'no-speech') {
-          console.warn('Speech engine state:', e.error);
+          console.warn('Speech engine:', e.error);
         }
       };
 
@@ -373,109 +358,87 @@ export default function App() {
     }
   };
 
-  const cancelActiveSpeech = () => {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-      currentAudioRef.current = null;
+  // Native Web Speech Synthesis (0ms Latency, zero socket/network errors)
+  const cancelNativeSpeech = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
   };
 
-  const playEarlyAudioStream = (base64Audio) => {
-    cancelActiveSpeech();
-    try {
-      setSphereState('speaking');
-      setStatusMessage('NOVA is speaking...');
+  const speakWithNativeTTS = (text) => {
+    cancelNativeSpeech();
 
-      const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
-      currentAudioRef.current = audio;
-
-      audio.onended = () => {
-        currentAudioRef.current = null;
-        isProcessingRef.current = false;
-        setSphereState('idle');
-        setStatusMessage('Listening...');
-        startSpeechRecognition();
-      };
-
-      audio.play();
-    } catch (_) {}
-  };
-
-  const playSynthesizedVoice = (base64Audio) => {
-    cancelActiveSpeech();
-    try {
-      setSphereState('speaking');
-      setStatusMessage('NOVA is speaking...');
-
-      const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
-      currentAudioRef.current = audio;
-
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      const ctx = audioContextRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 64;
-      const source = ctx.createMediaElementSource(audio);
-      source.connect(analyser);
-      analyser.connect(ctx.destination);
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const updatePulse = () => {
-        if (!currentAudioRef.current) return;
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-        setAudioLevel(Math.min(1.0, Math.max(0.18, (sum / dataArray.length) / 75)));
-        requestAnimationFrame(updatePulse);
-      };
-
-      audio.onplay = () => updatePulse();
-
-      audio.onended = () => {
-        currentAudioRef.current = null;
-        isProcessingRef.current = false;
-        setSphereState('idle');
-        setStatusMessage('Listening...');
-        setAudioLevel(0.18);
-        startSpeechRecognition();
-      };
-
-      audio.onerror = () => {
-        currentAudioRef.current = null;
-        isProcessingRef.current = false;
-        setSphereState('idle');
-        setStatusMessage('Listening...');
-        startSpeechRecognition();
-      };
-
-      audio.play();
-    } catch (_) {
+    if (!('speechSynthesis' in window) || !text || !text.trim()) {
       isProcessingRef.current = false;
       setSphereState('idle');
       setStatusMessage('Listening...');
       startSpeechRecognition();
+      return;
     }
+
+    setSphereState('speaking');
+    setStatusMessage('NOVA is speaking...');
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.05;
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      const selectedVoice = voices.find(
+        (v) =>
+          v.name.includes('Aria') ||
+          v.name.includes('Jenny') ||
+          v.name.includes('Natural') ||
+          v.name.includes('Google US English') ||
+          v.lang.startsWith('en')
+      );
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+    }
+
+    let pulseInterval = setInterval(() => {
+      setAudioLevel(0.35 + Math.random() * 0.45);
+    }, 120);
+
+    utterance.onend = () => {
+      clearInterval(pulseInterval);
+      setAudioLevel(0.18);
+      isProcessingRef.current = false;
+      setSphereState('idle');
+      setStatusMessage('Listening...');
+      startSpeechRecognition();
+    };
+
+    utterance.onerror = () => {
+      clearInterval(pulseInterval);
+      setAudioLevel(0.18);
+      isProcessingRef.current = false;
+      setSphereState('idle');
+      setStatusMessage('Listening...');
+      startSpeechRecognition();
+    };
+
+    window.speechSynthesis.speak(utterance);
   };
 
-  // Unified pipeline: Appends to Multi-Turn Chat Memory Buffer & Sends to AI
+  // Unified Execution Pipeline
   const handleExecute = async (overridePrompt = null) => {
     const prompt = overridePrompt || inputText;
     if (!prompt.trim()) return;
 
+    // Increment execution token to discard stale/delayed execution queues
+    const currentToken = ++executionTokenRef.current;
+
     isProcessingRef.current = true;
     stopSpeechRecognition();
-    cancelActiveSpeech();
+    cancelNativeSpeech();
 
     setInputText('');
     setSphereState('thinking');
-    setStatusMessage('JARVIS Thinking...');
+    setStatusMessage('NOVA is thinking...');
 
-    // Snapshot current conversation history to send
     const historySnapshot = [...chatHistory];
 
     const result = await window.novaAPI.processCommand({
@@ -485,16 +448,18 @@ export default function App() {
       includeVision: true
     });
 
+    // Discard result if a newer query took over
+    if (currentToken !== executionTokenRef.current) return;
+
     if (result && result.success) {
-      // Append user prompt and model response to conversation memory
       setChatHistory((prev) => [
         ...prev,
         { role: 'user', text: prompt },
         { role: 'model', text: result.spokenResponse || 'Action executed.' }
       ]);
 
-      if (result.audioBase64) {
-        playSynthesizedVoice(result.audioBase64);
+      if (result.spokenResponse) {
+        speakWithNativeTTS(result.spokenResponse);
       } else {
         isProcessingRef.current = false;
         setSphereState('idle');
@@ -582,7 +547,7 @@ export default function App() {
                   <div className="text-sm font-bold tracking-wide">
                     Hello! I'm <span className="text-purple-400 font-extrabold">NOVA</span>
                   </div>
-                  <div className="text-xs text-slate-400">Conversational memory active. Push-to-Talk: [{settings.globalHotkey || 'Alt+Space'}]</div>
+                  <div className="text-xs text-slate-400">Speak naturally. 1.0s auto-submit active. Hotkey: [{settings.globalHotkey || 'Alt+Space'}]</div>
                 </div>
               </div>
             ) : (
@@ -625,9 +590,9 @@ export default function App() {
               >
                 <button
                   type="button"
-                  onClick={() => handleExecute('Remember this: my preferred project directory is C:/Projects')}
+                  onClick={() => handleExecute('Create index.html with a futuristic landing page on desktop and open it')}
                   className="w-10 h-10 rounded-full bg-slate-900 border border-slate-700/80 flex items-center justify-center text-slate-300 hover:text-cyan-400 hover:border-cyan-400 transition"
-                  title="Test Context Memory"
+                  title="Generate Visual Code Project"
                 >
                   <Plus className="w-5 h-5" />
                 </button>
@@ -726,7 +691,7 @@ export default function App() {
             <div className="flex-1 flex items-end justify-end">
               <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-500">
                 <span className="w-6 h-[1px] bg-slate-800" />
-                <span>NOVA v3.2 &bull; Context Memory Active</span>
+                <span>NOVA v3.3 &bull; Real-Time VAD</span>
               </div>
             </div>
           </aside>
