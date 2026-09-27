@@ -1,18 +1,15 @@
-const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// 1. Hardware acceleration crash prevention
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
 
-// 2. Safe Emergency Crash Logger (Using os.tmpdir so it never crashes before app.whenReady)
 function logEmergencyCrash(type, error) {
-  const errString = (error && error.stack) ? error.stack : String(error);
+  const errString = error && error.stack ? error.stack : String(error);
   const logMessage = `[${new Date().toISOString()}] ${type}:\n${errString}\n\n`;
-
   try {
     const tempPath = path.join(os.tmpdir(), 'nova_startup_crash.log');
     fs.writeFileSync(tempPath, logMessage, { flag: 'a' });
@@ -21,27 +18,19 @@ function logEmergencyCrash(type, error) {
 
 process.on('uncaughtException', (error) => {
   logEmergencyCrash('Uncaught Exception', error);
-  dialog.showErrorBox(
-    'NOVA AI Startup Error',
-    `A critical exception occurred:\n\n${(error && error.stack) || error}`
-  );
+  dialog.showErrorBox('NOVA AI Startup Exception', `${(error && error.stack) || error}`);
 });
 
 process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// 3. Prevent Ghost Background Processes (Single Instance Lock)
+// Single Instance Lock
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  dialog.showErrorBox(
-    'NOVA AI Already Running',
-    'NOVA AI is already running in Task Manager. Please close it first or check your system tray.'
-  );
   app.exit(0);
 }
 
-// 4. Safe Module Loader
 let automation = null;
 let vision = null;
 let ttsEngine = null;
@@ -53,6 +42,7 @@ try { ttsEngine = require('./tts_engine'); } catch (e) { logEmergencyCrash('TTS 
 try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Load', e); }
 
 let mainWindow = null;
+let tray = null;
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -72,7 +62,11 @@ const DEFAULT_SETTINGS = {
 };
 
 function getSettingsPath() {
-  return path.join(app.getPath('userData'), 'nova_config.json');
+  const userDir = app.getPath('userData');
+  if (!fs.existsSync(userDir)) {
+    fs.mkdirSync(userDir, { recursive: true });
+  }
+  return path.join(userDir, 'nova_persistent_config.json');
 }
 
 function readSettings() {
@@ -95,6 +89,7 @@ function writeSettings(newConfig) {
     fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf-8');
     return { success: true };
   } catch (err) {
+    logEmergencyCrash('Settings Write Warning', err);
     return { success: false, error: err.message };
   }
 }
@@ -115,7 +110,6 @@ function broadcastState(state) {
   }
 }
 
-// 5. Preload & HTML Path Resolution
 function resolvePreloadPath() {
   const candidates = [
     path.join(__dirname, '../preload.js'),
@@ -124,7 +118,6 @@ function resolvePreloadPath() {
     path.join(app.getAppPath(), 'preload.js'),
     path.resolve(__dirname, '..', 'preload.js')
   ];
-
   for (const c of candidates) {
     try {
       if (fs.existsSync(c)) return c;
@@ -141,7 +134,6 @@ function resolveIndexPath() {
     path.join(process.cwd(), 'dist', 'index.html'),
     path.join(process.resourcesPath, 'app.asar', 'dist', 'index.html')
   ];
-
   for (const c of candidates) {
     try {
       if (fs.existsSync(c)) return c;
@@ -159,9 +151,9 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 740,
     backgroundColor: '#030712',
-    show: true, // Visible immediately - prevents invisible window bug
-    frame: true,
-    autoHideMenuBar: true,
+    show: true,
+    frame: false, // Frameless Glassmorphic Layout
+    titleBarStyle: 'hidden',
     webPreferences: {
       preload: preloadResolved,
       contextIsolation: true,
@@ -172,64 +164,85 @@ function createWindow() {
   });
 
   const isDev = !app.isPackaged && process.argv.includes('--dev');
-
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173').catch(() => {
-      loadProductionBuild(mainWindow);
-    });
+    mainWindow.loadURL('http://localhost:5173').catch(() => loadProductionBuild(mainWindow));
   } else {
     loadProductionBuild(mainWindow);
   }
 
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.focus();
+  // Prevent app from quitting when window is closed (minimize to tray)
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
   });
 }
 
 function loadProductionBuild(targetWindow) {
   const resolvedHtml = resolveIndexPath();
-
   if (resolvedHtml) {
     targetWindow.loadFile(resolvedHtml).catch((err) => {
-      dialog.showErrorBox(
-        'NOVA AI Load Error',
-        `Failed to load compiled HTML from:\n${resolvedHtml}\n\nError: ${err.message}`
-      );
+      dialog.showErrorBox('NOVA AI Load Fault', `Error: ${err.message}`);
     });
   } else {
-    // Diagnostic Fallback Screen so user knows exactly what path is missing
-    const appDir = app.getAppPath();
     const fallbackHTML = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <style>
-            body { background: #030712; color: #f87171; font-family: monospace; padding: 40px; }
-            h2 { color: #38bdf8; }
-            code { background: #0b1120; padding: 4px 8px; border-radius: 4px; color: #e2e8f0; }
-          </style>
-        </head>
-        <body>
-          <h2>NOVA AI - Production Assets Not Found</h2>
-          <p>Could not locate <code>dist/index.html</code>.</p>
-          <p>Root Directory: <code>${appDir}</code></p>
-        </body>
-      </html>
+      <!DOCTYPE html><html><body style="background:#030712;color:#f87171;font-family:sans-serif;padding:40px;">
+      <h2>NOVA AI - Production Assets Not Found</h2>
+      <p>Please ensure <code>npm run build:renderer</code> ran before packaging.</p></body></html>
     `;
     targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHTML)}`);
   }
 }
 
-// 6. Application Lifecycle
-app.whenReady().then(() => {
+// System Tray Service for Background Voice Listening
+function setupSystemTray() {
   try {
-    session.defaultSession.setPermissionRequestHandler((_wc, _perm, callback) => callback(true));
-    session.defaultSession.setPermissionCheckHandler(() => true);
+    const iconPath = path.join(__dirname, '../../public/favicon.ico');
+    const trayIcon = fs.existsSync(iconPath) ? iconPath : null;
+    tray = new Tray(trayIcon || path.join(app.getAppPath(), 'dist/favicon.ico'));
+    const contextMenu = Menu.buildFromTemplate([
+      { label: 'Open NOVA AI', click: () => { mainWindow.show(); mainWindow.focus(); } },
+      { type: 'separator' },
+      { label: 'Quit NOVA', click: () => { app.isQuitting = true; app.quit(); } }
+    ]);
+    tray.setToolTip('NOVA AI - Neural Assistant (Listening in Background)');
+    tray.setContextMenu(contextMenu);
+    tray.on('double-click', () => {
+      mainWindow.show();
+      mainWindow.focus();
+    });
   } catch (_) {}
+}
+
+app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((_wc, _perm, callback) => callback(true));
+  session.defaultSession.setPermissionCheckHandler(() => true);
 
   createWindow();
+  setupSystemTray();
 
-  // IPC Handlers
+  // Register Global Hotkey (Ctrl + Space) to summon from background
+  globalShortcut.register('CommandOrControl+Space', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized() || !mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+      mainWindow.focus();
+      broadcastState('listening');
+    }
+  });
+
+  // Native Frameless Window IPC Controls
+  ipcMain.on('nova:window:control', (_, action) => {
+    if (!mainWindow) return;
+    if (action === 'minimize') mainWindow.hide();
+    else if (action === 'maximize') mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+    else if (action === 'close') {
+      mainWindow.hide();
+    }
+  });
+
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
@@ -256,16 +269,6 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir }) => {
-    if (!automation || !automation.createDesktopFile) return { success: false };
-    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
-  });
-
-  ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery }) => {
-    if (!automation || !automation.openBrowserAndPlay) return { success: false };
-    return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
-  });
-
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, includeVision }) => {
     const config = readSettings();
     try {
@@ -276,7 +279,7 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      if (text) broadcastLog('command', `User: "${text}"`);
+      if (text) broadcastLog('command', `Directive: "${text}"`);
 
       if (!aiEngine || !aiEngine.runAIInference) {
         throw new Error('AI Engine subsystem offline.');
@@ -287,7 +290,7 @@ app.whenReady().then(() => {
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
-          await automation.executeAction(action, broadcastLog);
+          await automation.executeAction(action, broadcastLog, mainWindow);
         }
       }
 
@@ -324,21 +327,8 @@ app.whenReady().then(() => {
       };
     }
   });
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
 });
 
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
