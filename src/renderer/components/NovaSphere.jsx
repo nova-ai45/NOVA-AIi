@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
+export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -9,13 +9,13 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
     const ctx = canvas.getContext('2d');
     let animationFrameId;
 
-    let width = (canvas.width = 620);
-    let height = (canvas.height = 540);
+    const width = (canvas.width = 620);
+    const height = (canvas.height = 540);
 
     let angleX = 0;
     let angleY = 0;
     let blinkTimer = 0;
-    let eyeBlinkProgress = 0; // 0 = open, 1 = closed
+    let eyeBlinkProgress = 0;
 
     const particles = Array.from({ length: 65 }, () => ({
       x: (Math.random() - 0.5) * 260,
@@ -31,14 +31,13 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
       const centerX = width / 2;
       const centerY = height / 2 - 25;
 
-      // State dynamic speeds and colors
       let speedMultiplier = 1;
       let coreColorStart = '#00f0ff';
       let coreColorEnd = '#9333ea';
       let eyeGlow = '#00f0ff';
 
       if (state === 'thinking') {
-        speedMultiplier = 2.8;
+        speedMultiplier = 2.6;
         coreColorStart = '#a855f7';
         coreColorEnd = '#ec4899';
         eyeGlow = '#f43f5e';
@@ -48,16 +47,21 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
         coreColorEnd = '#6366f1';
         eyeGlow = '#38bdf8';
       } else if (state === 'listening') {
-        speedMultiplier = 1.2;
+        speedMultiplier = 1.3;
         coreColorStart = '#06b6d4';
         coreColorEnd = '#3b82f6';
         eyeGlow = '#22d3ee';
+      } else if (state === 'executing') {
+        speedMultiplier = 2.0;
+        coreColorStart = '#10b981';
+        coreColorEnd = '#06b6d4';
+        eyeGlow = '#34d399';
       }
 
       angleY += 0.012 * speedMultiplier;
       angleX += 0.006 * speedMultiplier;
 
-      // 1. Perspective Holographic Pedestal (Concentric Rings on the Floor)
+      // Concentric Floor Pedestal Rings
       const pedestalY = centerY + 175;
       for (let r = 3; r >= 1; r--) {
         ctx.save();
@@ -71,7 +75,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
         ctx.restore();
       }
 
-      // Vertical Pedestal Light Rays / Upward Cone Glow
+      // Vertical Upward Pedestal Light Cone
       const beamGrad = ctx.createLinearGradient(centerX, pedestalY, centerX, centerY + 40);
       beamGrad.addColorStop(0, 'rgba(0, 240, 255, 0.22)');
       beamGrad.addColorStop(0.5, 'rgba(147, 51, 234, 0.1)');
@@ -85,20 +89,20 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
       ctx.closePath();
       ctx.fill();
 
-      // 2. Swirling Orbit Particles
+      // Swirling Orbit Particles
       particles.forEach((p) => {
         const radY = angleY * p.speed * 80;
         const radX = angleX * p.speed * 80;
 
-        let cosY = Math.cos(radY);
-        let sinY = Math.sin(radY);
-        let x1 = p.x * cosY - p.z * sinY;
-        let z1 = p.z * cosY + p.x * sinY;
+        const cosY = Math.cos(radY);
+        const sinY = Math.sin(radY);
+        const x1 = p.x * cosY - p.z * sinY;
+        const z1 = p.z * cosY + p.x * sinY;
 
-        let cosX = Math.cos(radX);
-        let sinX = Math.sin(radX);
-        let y2 = p.y * cosX - z1 * sinX;
-        let z2 = z1 * cosX + p.y * sinX;
+        const cosX = Math.cos(radX);
+        const sinX = Math.sin(radX);
+        const y2 = p.y * cosX - z1 * sinX;
+        const z2 = z1 * cosX + p.y * sinX;
 
         const fov = 350;
         const scale = fov / (fov + z2 + 200);
@@ -116,8 +120,8 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
         ctx.restore();
       });
 
-      // 3. Inclined 3D Holographic Orbit Rings
-      const ringScale = 1 + Math.sin(Date.now() / 600) * 0.03 + (state === 'speaking' ? audioLevel * 0.2 : 0);
+      // Holographic Orbit Rings
+      const ringScale = 1 + Math.sin(Date.now() / 600) * 0.03 + (state === 'speaking' ? audioLevel * 0.25 : 0);
       for (let i = 0; i < 2; i++) {
         ctx.save();
         ctx.translate(centerX, centerY);
@@ -133,9 +137,13 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
         ctx.restore();
       }
 
-      // 4. Central Hologram Glowing Orb Core
+      // Central Orb Core
       const baseRadius = 88;
-      const pulse = state === 'speaking' ? baseRadius + audioLevel * 35 : baseRadius + Math.sin(Date.now() / 450) * 4;
+      const pulse = state === 'speaking'
+        ? baseRadius + audioLevel * 35
+        : state === 'thinking'
+        ? baseRadius + Math.sin(Date.now() / 150) * 6
+        : baseRadius + Math.sin(Date.now() / 450) * 4;
 
       const coreGradient = ctx.createRadialGradient(
         centerX - 20,
@@ -159,7 +167,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
       ctx.fill();
       ctx.restore();
 
-      // Outer Translucent Glass Bubble Rim
+      // Outer Rim Glass Border
       ctx.save();
       ctx.beginPath();
       ctx.arc(centerX, centerY, pulse, 0, Math.PI * 2);
@@ -170,7 +178,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
       ctx.stroke();
       ctx.restore();
 
-      // 5. Expressive Holographic Vertical Capsule Eyes
+      // Expressive Vertical Capsule Eyes
       blinkTimer++;
       if (blinkTimer > 180 && blinkTimer < 192) {
         eyeBlinkProgress = (blinkTimer - 180) / 12;
@@ -200,7 +208,6 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.2 }) {
         ctx.shadowBlur = 24;
         ctx.fill();
 
-        // Inner glowing core of eyes
         ctx.beginPath();
         ctx.roundRect(eyeX + 2, eyeY + 2, eyeWidth - 4, Math.max(1, dynamicEyeHeight - 4), (eyeWidth - 4) / 2);
         ctx.fillStyle = eyeGlow;
