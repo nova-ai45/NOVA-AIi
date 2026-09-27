@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// 1. Hardware acceleration safety
+// 1. Prevent hardware acceleration GPU crashes
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
@@ -27,7 +27,7 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// 3. Single Instance Enforcement
+// 3. Single Instance Lock
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -57,7 +57,7 @@ const DEFAULT_SETTINGS = {
   customBaseURL: 'https://api.groq.com/openai/v1',
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
-  voice: 'en-US-AriaNeural',
+  voice: 'default',
   globalHotkey: 'Alt+Space',
   autoSpeak: true,
   autoVision: true,
@@ -97,6 +97,7 @@ function writeSettings(newConfig) {
   }
 }
 
+// OS Global Hotkey Registrar with dynamic hotkey swapping
 function registerGlobalPushToTalkHotkey(hotkeyStr) {
   try {
     globalShortcut.unregisterAll();
@@ -113,7 +114,6 @@ function registerGlobalPushToTalkHotkey(hotkeyStr) {
       activeRegisteredHotkey = targetKey;
       return { success: true, hotkey: targetKey };
     } else {
-      // Fallback to default Alt+Space
       const fallback = globalShortcut.register('Alt+Space', () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           if (mainWindow.isMinimized()) mainWindow.restore();
@@ -210,9 +210,6 @@ function createWindow() {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('nova:systemShutdown');
     }
-    if (ttsEngine && ttsEngine.cancelActiveTTS) {
-      ttsEngine.cancelActiveTTS();
-    }
   });
 
   mainWindow.on('closed', () => {
@@ -243,12 +240,22 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // Register configured or default Alt+Space Push-to-Talk global hotkey
+  // Register configured OS hotkey
   const config = readSettings();
   registerGlobalPushToTalkHotkey(config.globalHotkey || 'Alt+Space');
 
-  // Dynamic Hotkey Registrar from Settings UI
+  // Dynamic Hotkey Registrar from Settings
   ipcMain.handle('nova:updateHotkey', (_, newHotkey) => {
+    const res = registerGlobalPushToTalkHotkey(newHotkey);
+    if (res.success) {
+      const current = readSettings();
+      current.globalHotkey = res.hotkey;
+      writeSettings(current);
+    }
+    return res;
+  });
+
+  ipcMain.handle('update-global-hotkey', (_, newHotkey) => {
     const res = registerGlobalPushToTalkHotkey(newHotkey);
     if (res.success) {
       const current = readSettings();
@@ -277,19 +284,6 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('nova:speak', async (_, { text, voice }) => {
-    try {
-      if (!ttsEngine || !ttsEngine.synthesizeAudioStream) return { success: false };
-      broadcastState('speaking');
-      const settings = readSettings();
-      const selectedVoice = voice || settings.voice || 'en-US-AriaNeural';
-      const base64Audio = await ttsEngine.synthesizeAudioStream(text, selectedVoice);
-      return { success: true, base64Audio };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
-
   ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir }) => {
     if (!automation || !automation.createDesktopFile) return { success: false };
     return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
@@ -300,6 +294,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
   });
 
+  // AI Pipeline Execution Handler
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
     try {
@@ -327,17 +322,10 @@ app.whenReady().then(() => {
             mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
           }
         },
-        async (earlySentence) => {
-          if (settings.autoSpeak && ttsEngine && ttsEngine.synthesizeAudioStream) {
-            broadcastState('speaking');
-            const earlyAudio = await ttsEngine.synthesizeAudioStream(earlySentence, settings.voice || 'en-US-AriaNeural');
-            if (earlyAudio && mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('nova:earlyAudioChunk', earlyAudio);
-            }
-          }
-        }
+        () => {}
       );
 
+      // Execute automation actions
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -345,35 +333,21 @@ app.whenReady().then(() => {
         }
       }
 
-      let audioResult = null;
-      if (settings.autoSpeak && aiResponse.spokenResponse && ttsEngine && ttsEngine.synthesizeAudioStream) {
-        audioResult = await ttsEngine.synthesizeAudioStream(aiResponse.spokenResponse, settings.voice || 'en-US-AriaNeural');
-      }
-
       broadcastState('idle');
       return {
         success: true,
-        spokenResponse: aiResponse.spokenResponse,
-        actions: aiResponse.actions,
-        audioBase64: audioResult
+        spokenResponse: aiResponse.spokenResponse || '',
+        actions: aiResponse.actions || []
       };
     } catch (err) {
       broadcastState('idle');
       const spokenError = `Notice: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
       broadcastLog('error', err.message);
 
-      let errorAudio = null;
-      if (ttsEngine && ttsEngine.synthesizeAudioStream) {
-        try {
-          errorAudio = await ttsEngine.synthesizeAudioStream(spokenError, settings.voice || 'en-US-AriaNeural');
-        } catch (_) {}
-      }
-
       return {
         success: false,
         error: err.message,
-        spokenResponse: spokenError,
-        audioBase64: errorAudio
+        spokenResponse: spokenError
       };
     }
   });
