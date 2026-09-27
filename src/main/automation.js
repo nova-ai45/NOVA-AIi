@@ -34,15 +34,18 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
 
 /**
  * Smart Browser & YouTube Launcher
- * - If no query provided: ONLY opens the URL (No unwanted search text!)
- * - Dedicated Chrome launcher
+ * - Channel handles (@TheHasnainGamer1) are NEVER converted to search queries!
+ * - YouTube Home is NEVER polluted with unwanted search queries!
+ * - Dedicated Google Chrome launch
  */
 async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
     let finalUrl = url || 'https://www.youtube.com';
 
-    // Only append search query if user actually provided a search term
-    if (searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
+    // اگر لنک میں چینل ہینڈل (@) یا ڈائریکٹ ویڈیو ہے تو کبھی بھی سرچ کوئیری نہ بنائیں!
+    const isDirectLink = finalUrl.includes('@') || finalUrl.includes('/watch') || finalUrl.includes('/channel/');
+
+    if (!isDirectLink && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
       if (finalUrl.includes('youtube.com')) {
         finalUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery.trim())}`;
       } else {
@@ -57,7 +60,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
     const requested = (browserName || 'chrome').toLowerCase();
     logCallback('automation', `browser.launch(target="${finalUrl}", browser="${requested}")`);
 
-    // Launch in Chrome explicitly on Windows
+    // ونڈوز پر براہِ راست گوگل کروم میں اوپن کریں
     if (process.platform === 'win32') {
       if (requested.includes('chrome')) {
         exec(`start chrome "${finalUrl}"`, (err) => {
@@ -72,7 +75,6 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
       }
     }
 
-    // Default Fallback
     await shell.openExternal(finalUrl);
     return { success: true, launchedUrl: finalUrl };
   } catch (err) {
@@ -90,7 +92,6 @@ async function playYouTubeVideoAction(actionType = 'first_video', logCallback = 
 
     if (process.platform === 'win32') {
       if (actionType === 'first_video' || actionType === 'play_short') {
-        // Send Tab + Enter to active Chrome window to open first video
         const psScript = `
           Add-Type -AssemblyName System.Windows.Forms;
           Start-Sleep -Milliseconds 600;
@@ -100,7 +101,6 @@ async function playYouTubeVideoAction(actionType = 'first_video', logCallback = 
         `;
         exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`);
       } else {
-        // Play / Pause toggle via 'k' key (universal YouTube shortcut)
         const psScript = `
           Add-Type -AssemblyName System.Windows.Forms;
           Start-Sleep -Milliseconds 300;
