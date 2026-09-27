@@ -1,8 +1,9 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
+const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA AI, an advanced Desktop Voice Assistant.
+You are NOVA AI, an advanced Neural Desktop Operating Voice Assistant.
 
 CRITICAL IDENTITY RULES:
 - Creator / Developer: Hasnain (The Hasnain Gamer).
@@ -22,15 +23,9 @@ CRITICAL BROWSER & AUTOMATION RULES:
      }
    }
 2. When asked to create a file (e.g. index.html, app.py), you MUST return the CREATE_FILE action with filename and full code content.
-3. If user asks to open developer's channel:
-   {
-     "type": "OPEN_BROWSER",
-     "payload": {
-       "url": "https://www.youtube.com/@TheHasnainGamer1",
-       "query": null,
-       "browser": "chrome"
-     }
-   }
+3. When user asks to click on something on screen, calculate accurate normalized coordinates (x, y) for a 1920x1080 display and return "CLICK_SCREEN".
+4. When user asks to scroll down or up, return "SCROLL_SCREEN" with direction and amount.
+5. If the user's voice command is silent, inaudible, or unclear, do not guess or execute actions. Politely ask them to repeat in Urdu.
 
 Strict JSON Output format:
 {
@@ -50,6 +45,65 @@ Strict JSON Output format:
 Always respond in natural, polite Roman Urdu or English matching the user.
 `;
 
+/**
+ * Sanitizes multi-turn chat history to strictly adhere to Gemini's API schema:
+ * 1. Alternates strictly between 'user' and 'model'.
+ * 2. Purges any trailing 'model' turn so the request ALWAYS ends with a valid 'user' turn.
+ * 3. Removes empty or blank text parts.
+ */
+function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
+  const sanitized = [];
+
+  if (Array.isArray(rawHistory)) {
+    for (const turn of rawHistory) {
+      if (!turn) continue;
+      const text = (turn.text || turn.content || '').trim();
+      if (!text) continue;
+
+      const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
+
+      // Enforce strict turn alternation: merge consecutive turns of identical role
+      if (sanitized.length > 0 && sanitized[sanitized.length - 1].role === role) {
+        sanitized[sanitized.length - 1].parts[0].text += `\n${text}`;
+      } else {
+        sanitized.push({
+          role,
+          parts: [{ text }]
+        });
+      }
+    }
+  }
+
+  // Gemini requires the history conversation to begin with a 'user' turn
+  while (sanitized.length > 0 && sanitized[0].role === 'model') {
+    sanitized.shift();
+  }
+
+  // If the historical conversation ended with a 'user' turn before the new user query,
+  // pop it so we do not have two consecutive 'user' turns
+  while (sanitized.length > 0 && sanitized[sanitized.length - 1].role === 'user') {
+    sanitized.pop();
+  }
+
+  // Ensure current user parts are valid and non-empty
+  const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
+    ? currentParts
+    : [{ text: 'User directive received.' }];
+
+  // Append the incoming active user prompt turn
+  sanitized.push({
+    role: 'user',
+    parts: validCurrentParts
+  });
+
+  // Final structural verification: The request MUST NOT end with a 'model' turn
+  while (sanitized.length > 0 && sanitized[sanitized.length - 1].role === 'model') {
+    sanitized.pop();
+  }
+
+  return sanitized;
+}
+
 async function runAIInferenceStream(
   userPrompt,
   audioBase64,
@@ -58,8 +112,16 @@ async function runAIInferenceStream(
   conversationHistory = [],
   onChunkCallback = () => {}
 ) {
+  let imageBase64 = manualImageBase64;
+  if (!imageBase64) {
+    try {
+      imageBase64 = await getLatestScreenContext();
+    } catch (_) {}
+  }
+
   const provider = config.provider || 'gemini';
 
+  // 1. Google Gemini 2.5 / 2.0 Flash Streaming Engine
   if (provider === 'gemini') {
     if (!config.geminiKey) {
       throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
@@ -68,27 +130,36 @@ async function runAIInferenceStream(
     const genAI = new GoogleGenerativeAI(config.geminiKey);
     const modelName = config.geminiModel || 'gemini-2.5-flash';
 
-    const formattedContents = [];
-    const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
-
-    memorySlice.forEach((turn) => {
-      if (turn.role && turn.text) {
-        formattedContents.push({
-          role: turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: turn.text }]
-        });
-      }
-    });
-
+    // Construct current incoming turn parts
     const currentParts = [];
-    if (userPrompt) {
-      currentParts.push({ text: userPrompt });
+
+    if (audioBase64) {
+      currentParts.push({
+        inlineData: {
+          mimeType: 'audio/webm',
+          data: audioBase64
+        }
+      });
+      currentParts.push({
+        text: 'Listen to the user voice command, observe screen image context if provided, and output the required strict JSON schema.'
+      });
     }
 
-    formattedContents.push({
-      role: 'user',
-      parts: currentParts
-    });
+    if (imageBase64) {
+      currentParts.push({
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: imageBase64
+        }
+      });
+    }
+
+    if (userPrompt && userPrompt.trim()) {
+      currentParts.push({ text: userPrompt.trim() });
+    }
+
+    // Sanitize complete multi-turn contents array
+    const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
 
     const model = genAI.getGenerativeModel({
       model: modelName,
@@ -97,7 +168,7 @@ async function runAIInferenceStream(
     });
 
     try {
-      const responseStream = await model.generateContentStream({ contents: formattedContents });
+      const responseStream = await model.generateContentStream({ contents: sanitizedContents });
       let fullText = '';
 
       for await (const chunk of responseStream.stream) {
@@ -115,16 +186,22 @@ async function runAIInferenceStream(
         err.message.includes('503');
 
       if (isQuotaError && config.openrouterKey) {
-        return await queryOpenRouterStream(userPrompt, config, memorySlice, onChunkCallback);
+        return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
       }
       throw err;
     }
   }
 
-  return await queryOpenRouterStream(userPrompt, config, conversationHistory, onChunkCallback);
+  // 2. OpenRouter Gateway
+  if (provider === 'openrouter') {
+    return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
+  }
+
+  // 3. Custom / Groq Endpoint
+  return await queryCustomStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
 }
 
-async function queryOpenRouterStream(userPrompt, config, conversationHistory = [], onChunkCallback = () => {}) {
+async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
   if (!config.openrouterKey) {
     throw new Error('OpenRouter API key is missing. Please enter it in Settings.');
   }
@@ -142,17 +219,74 @@ async function queryOpenRouterStream(userPrompt, config, conversationHistory = [
   const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
 
   const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
-  memorySlice.forEach((turn) => {
+  for (const turn of memorySlice) {
+    if (!turn || !turn.text) continue;
     messages.push({
       role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
-      content: turn.text || ''
+      content: turn.text
     });
-  });
+  }
 
-  messages.push({ role: 'user', content: userPrompt });
+  // Ensure last message is from user
+  while (messages.length > 1 && messages[messages.length - 1].role !== 'assistant' && messages[messages.length - 1].role !== 'system') {
+    messages.pop();
+  }
+
+  const currentContent = [];
+  if (userPrompt && userPrompt.trim()) {
+    currentContent.push({ type: 'text', text: userPrompt.trim() });
+  } else {
+    currentContent.push({ type: 'text', text: 'Voice directive received.' });
+  }
+
+  if (imageBase64) {
+    currentContent.push({
+      type: 'image_url',
+      image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
+    });
+  }
+
+  messages.push({ role: 'user', content: currentContent });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
+    messages,
+    response_format: { type: 'json_object' },
+    stream: true
+  });
+
+  let fullText = '';
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content || '';
+    fullText += text;
+    onChunkCallback(text);
+  }
+
+  return JSON.parse(fullText);
+}
+
+async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
+  const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
+  const client = new OpenAI({
+    baseURL,
+    apiKey: config.customKey || 'dummy'
+  });
+
+  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
+  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
+
+  for (const turn of memorySlice) {
+    if (!turn || !turn.text) continue;
+    messages.push({
+      role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
+      content: turn.text
+    });
+  }
+
+  messages.push({ role: 'user', content: userPrompt || 'Process context.' });
+
+  const stream = await client.chat.completions.create({
+    model: config.customModel || 'llama-3.3-70b-versatile',
     messages,
     response_format: { type: 'json_object' },
     stream: true
