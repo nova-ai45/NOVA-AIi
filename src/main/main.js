@@ -2,40 +2,45 @@ const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// 1. Process-Level Exception Handlers (Intercept any early crash & show native alert)
-function writeEmergencyLog(type, err) {
-  const message = `[${new Date().toISOString()}] ${type}:\n${(err && err.stack) || err}\n\n`;
+// 1. Prevent GPU crashes on varied Windows hardware configurations
+app.disableHardwareAcceleration();
+
+// 2. Emergency File & Dialog Crash Logger (Executes before any other imports)
+function logEmergencyCrash(type, error) {
+  const errString = (error && error.stack) ? error.stack : String(error);
+  const logMessage = `[${new Date().toISOString()}] ${type}:\n${errString}\n\n`;
+
   try {
-    const userDataPath = app.getPath('userData');
-    if (!fs.existsSync(userDataPath)) {
-      fs.mkdirSync(userDataPath, { recursive: true });
+    const userData = app.getPath('userData');
+    if (!fs.existsSync(userData)) {
+      fs.mkdirSync(userData, { recursive: true });
     }
-    fs.writeFileSync(path.join(userDataPath, 'crash.log'), message, { flag: 'a' });
+    fs.writeFileSync(path.join(userData, 'nova_startup_crash.log'), logMessage, { flag: 'a' });
   } catch (_) {
     try {
-      const tempPath = path.join(app.getPath('temp'), 'nova-crash.log');
-      fs.writeFileSync(tempPath, message, { flag: 'a' });
-    } catch (_) {}
+      const tempPath = path.join(app.getPath('temp'), 'nova_startup_crash.log');
+      fs.writeFileSync(tempPath, logMessage, { flag: 'a' });
+    } catch (__) {}
   }
 }
 
 process.on('uncaughtException', (error) => {
-  writeEmergencyLog('Uncaught Exception', error);
+  logEmergencyCrash('Uncaught Exception', error);
   dialog.showErrorBox(
-    'NOVA AI Startup Error',
+    'NOVA AI - Startup Exception',
     `A critical exception occurred in the main process:\n\n${(error && error.stack) || error}`
   );
 });
 
 process.on('unhandledRejection', (reason) => {
-  writeEmergencyLog('Unhandled Rejection', reason);
+  logEmergencyCrash('Unhandled Rejection', reason);
   dialog.showErrorBox(
-    'NOVA AI Runtime Rejection',
-    `An unhandled promise rejection occurred:\n\n${(reason && reason.stack) || reason}`
+    'NOVA AI - Unhandled Rejection',
+    `An unhandled asynchronous rejection occurred:\n\n${(reason && reason.stack) || reason}`
   );
 });
 
-// 2. Safe Helper Loader
+// 3. Isolated Module Loaders (Prevents background errors from blocking UI boot)
 let automation = null;
 let vision = null;
 let ttsEngine = null;
@@ -44,25 +49,25 @@ let aiEngine = null;
 try {
   automation = require('./automation');
 } catch (e) {
-  writeEmergencyLog('Automation Module Load Warning', e);
+  logEmergencyCrash('Automation Module Warning', e);
 }
 
 try {
   vision = require('./vision');
 } catch (e) {
-  writeEmergencyLog('Vision Module Load Warning', e);
+  logEmergencyCrash('Vision Module Warning', e);
 }
 
 try {
   ttsEngine = require('./tts_engine');
 } catch (e) {
-  writeEmergencyLog('TTS Module Load Warning', e);
+  logEmergencyCrash('TTS Engine Warning', e);
 }
 
 try {
   aiEngine = require('./ai_engine');
 } catch (e) {
-  writeEmergencyLog('AI Engine Module Load Warning', e);
+  logEmergencyCrash('AI Engine Warning', e);
 }
 
 let mainWindow = null;
@@ -84,32 +89,32 @@ const DEFAULT_SETTINGS = {
   autoFailover: true
 };
 
-function getSettingsFilePath() {
+function getSettingsPath() {
   return path.join(app.getPath('userData'), 'nova_config.json');
 }
 
 function readSettings() {
   try {
-    const filePath = getSettingsFilePath();
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, JSON.stringify(DEFAULT_SETTINGS, null, 2), 'utf-8');
+    const configPath = getSettingsPath();
+    if (!fs.existsSync(configPath)) {
+      fs.writeFileSync(configPath, JSON.stringify(DEFAULT_SETTINGS, null, 2), 'utf-8');
       return DEFAULT_SETTINGS;
     }
-    const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     return { ...DEFAULT_SETTINGS, ...data };
   } catch (err) {
-    writeEmergencyLog('Settings Read Fault', err);
+    logEmergencyCrash('Settings Read Warning', err);
     return DEFAULT_SETTINGS;
   }
 }
 
 function writeSettings(newConfig) {
   try {
-    const filePath = getSettingsFilePath();
-    fs.writeFileSync(filePath, JSON.stringify(newConfig, null, 2), 'utf-8');
+    const configPath = getSettingsPath();
+    fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf-8');
     return { success: true };
   } catch (err) {
-    writeEmergencyLog('Settings Write Fault', err);
+    logEmergencyCrash('Settings Write Warning', err);
     return { success: false, error: err.message };
   }
 }
@@ -130,26 +135,27 @@ function broadcastState(state) {
   }
 }
 
-// 3. Dynamic Path Resolvers for Packaged & Unpackaged Deployments
+// 4. Robust Path Resolvers for Production (.asar) & Development
 function resolvePreloadPath() {
   const candidates = [
     path.join(__dirname, '../preload.js'),
     path.join(__dirname, 'preload.js'),
     path.join(app.getAppPath(), 'src', 'preload.js'),
-    path.join(app.getAppPath(), 'preload.js')
+    path.join(app.getAppPath(), 'preload.js'),
+    path.resolve(__dirname, '..', 'preload.js')
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch (_) {}
   }
-
-  // Fallback to default relative path
   return path.join(__dirname, '../preload.js');
 }
 
-function resolveHtmlPath() {
+function resolveIndexPath() {
   const candidates = [
     path.join(__dirname, '../../dist/index.html'),
     path.join(__dirname, '../dist/index.html'),
@@ -158,16 +164,17 @@ function resolveHtmlPath() {
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
+    try {
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch (_) {}
   }
-
   return null;
 }
 
 function createWindow() {
-  const resolvedPreload = resolvePreloadPath();
+  const preloadResolved = resolvePreloadPath();
 
   mainWindow = new BrowserWindow({
     width: 1340,
@@ -177,8 +184,9 @@ function createWindow() {
     backgroundColor: '#030712',
     show: false,
     frame: true,
+    autoHideMenuBar: true,
     webPreferences: {
-      preload: resolvedPreload,
+      preload: preloadResolved,
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
@@ -186,61 +194,71 @@ function createWindow() {
     }
   });
 
+  // Ensure window displays even if ready-to-show stalls
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
+
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  }, 2000);
 
   const isDev = !app.isPackaged && (process.env.NODE_ENV === 'development' || process.argv.includes('--dev'));
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173').catch(() => {
-      loadProductionIndex(mainWindow);
+      loadProductionBuild(mainWindow);
     });
   } else {
-    loadProductionIndex(mainWindow);
+    loadProductionBuild(mainWindow);
   }
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    writeEmergencyLog('Renderer Gone', details.reason);
+    logEmergencyCrash('Renderer Crash', details.reason);
   });
 }
 
-function loadProductionIndex(targetWindow) {
-  const resolvedHtml = resolveHtmlPath();
+function loadProductionBuild(targetWindow) {
+  const resolvedHtml = resolveIndexPath();
 
   if (resolvedHtml) {
     targetWindow.loadFile(resolvedHtml).catch((err) => {
       dialog.showErrorBox(
-        'NOVA Load Error',
-        `Failed to load bundle from:\n${resolvedHtml}\n\nError: ${err.message}`
+        'NOVA AI Load Error',
+        `Failed to load compiled HTML from:\n${resolvedHtml}\n\nError: ${err.message}`
       );
     });
   } else {
-    const errorHtml = `
+    // Diagnostic Fallback Screen
+    const appDir = app.getAppPath();
+    const fallbackHTML = `
       <!DOCTYPE html>
       <html>
         <head>
           <style>
-            body { background: #030712; color: #f87171; font-family: monospace; padding: 40px; }
+            body { background: #030712; color: #f87171; font-family: sans-serif; padding: 40px; }
             h2 { color: #38bdf8; }
-            pre { background: #0b1120; padding: 15px; border-radius: 8px; color: #cbd5e1; }
+            code { background: #0b1120; padding: 4px 8px; border-radius: 4px; color: #e2e8f0; }
           </style>
         </head>
         <body>
-          <h2>NOVA AI - Production Asset Load Fault</h2>
-          <p>Could not locate the compiled <strong>dist/index.html</strong> entry point.</p>
-          <p>App Root: ${app.getAppPath()}</p>
-          <p>Execution Directory: ${__dirname}</p>
+          <h2>NOVA AI - Production Assets Not Found</h2>
+          <p>Could not locate the compiled <code>dist/index.html</code>.</p>
+          <p>Make sure <code>npm run build:renderer</code> was executed prior to packaging.</p>
+          <p>Searched root: <code>${appDir}</code></p>
         </body>
       </html>
     `;
-    targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(errorHtml)}`);
+    targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHTML)}`);
   }
 }
 
-// 4. Single-Instance Lock Enforcement
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
-if (!hasSingleInstanceLock) {
+// 5. Single Instance Lock
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -257,19 +275,19 @@ if (!hasSingleInstanceLock) {
       });
       session.defaultSession.setPermissionCheckHandler(() => true);
     } catch (e) {
-      writeEmergencyLog('Session Permission Warning', e);
+      logEmergencyCrash('Session Permissions Warning', e);
     }
 
     createWindow();
 
-    // IPC Handlers
+    // 6. Registered IPC Handlers
     ipcMain.handle('nova:getSettings', () => readSettings());
     ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
     ipcMain.handle('nova:captureScreen', async () => {
       try {
         if (!vision || !vision.captureActiveDisplay) {
-          throw new Error('Vision module unavailable.');
+          throw new Error('Vision subsystem unavailable.');
         }
         const screenshotBase64 = await vision.captureActiveDisplay();
         return { success: true, imageBase64: screenshotBase64 };
@@ -281,7 +299,7 @@ if (!hasSingleInstanceLock) {
     ipcMain.handle('nova:speak', async (_, { text, voice }) => {
       try {
         if (!ttsEngine || !ttsEngine.synthesizeAudioStream) {
-          throw new Error('TTS module unavailable.');
+          throw new Error('TTS subsystem unavailable.');
         }
         broadcastState('speaking');
         const settings = readSettings();
@@ -295,14 +313,14 @@ if (!hasSingleInstanceLock) {
 
     ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir }) => {
       if (!automation || !automation.createDesktopFile) {
-        return { success: false, error: 'Automation subsystem offline.' };
+        return { success: false, error: 'Automation subsystem unavailable.' };
       }
       return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
     });
 
     ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery }) => {
       if (!automation || !automation.openBrowserAndPlay) {
-        return { success: false, error: 'Automation subsystem offline.' };
+        return { success: false, error: 'Automation subsystem unavailable.' };
       }
       return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
     });
@@ -318,13 +336,13 @@ if (!hasSingleInstanceLock) {
         }
 
         if (text) {
-          broadcastLog('command', `User Directive: "${text}"`);
+          broadcastLog('command', `Directive: "${text}"`);
         } else if (audioBase64) {
-          broadcastLog('command', 'User: [Voice Directive Transmitted]');
+          broadcastLog('command', 'Directive: [Voice Audio Received]');
         }
 
         if (!aiEngine || !aiEngine.runAIInference) {
-          throw new Error('AI Router subsystem unavailable.');
+          throw new Error('AI Engine subsystem unavailable.');
         }
 
         const aiResponse = await aiEngine.runAIInference(text, audioBase64, visionData, config);
@@ -339,7 +357,10 @@ if (!hasSingleInstanceLock) {
         let audioResult = null;
         if (config.autoSpeak && aiResponse.spokenResponse && ttsEngine && ttsEngine.synthesizeAudioStream) {
           broadcastState('speaking');
-          audioResult = await ttsEngine.synthesizeAudioStream(aiResponse.spokenResponse, config.voice || 'en-US-AriaNeural');
+          audioResult = await ttsEngine.synthesizeAudioStream(
+            aiResponse.spokenResponse,
+            config.voice || 'en-US-AriaNeural'
+          );
         }
 
         broadcastState('idle');
