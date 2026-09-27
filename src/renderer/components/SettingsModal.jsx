@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
-import { X, Save, Sliders, Globe, Mic, Key, Server, Cpu, Sparkles, ShieldCheck } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Save, Sliders, Mic, Sparkles, Key, AlertCircle, CheckCircle } from 'lucide-react';
 
-export default function SettingsModal({ isOpen, onClose, currentSettings, onSave }) {
+export default function SettingsModal({ isOpen, isFirstRun = false, onClose, currentSettings, onSave }) {
   const [formData, setFormData] = useState(currentSettings);
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    setFormData(currentSettings);
+  }, [currentSettings]);
 
   if (!isOpen) return null;
 
@@ -12,29 +17,40 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
 
   const handleSave = () => {
     onSave(formData);
-    onClose();
+    setSavedSuccess(true);
+    setTimeout(() => {
+      setSavedSuccess(false);
+      onClose();
+    }, 800);
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-[#060a1a] border border-purple-500/40 rounded-3xl shadow-[0_0_60px_rgba(147,51,234,0.3)] overflow-hidden flex flex-col">
-        {/* Modal Header */}
+      <div className="w-full max-w-2xl bg-[#060a1a] border border-purple-500/50 rounded-3xl shadow-[0_0_70px_rgba(147,51,234,0.35)] overflow-hidden flex flex-col animate-scaleUp">
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0a1028]">
           <div className="flex items-center space-x-2.5 text-purple-400">
             <Sliders className="w-5 h-5" />
             <h2 className="font-mono font-bold text-sm tracking-widest uppercase">
-              NOVA AI // UNIFIED BRAIN CONFIGURATION
+              {isFirstRun ? 'NOVA AI // INITIAL COGNITIVE SETUP' : 'SYSTEM CONFIGURATION & PERSISTENT KEYS'}
             </h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!isFirstRun && (
+            <button onClick={onClose} className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition">
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
 
-        {/* Modal Body */}
+        {/* First Run Callout */}
+        {isFirstRun && (
+          <div className="px-6 py-3 bg-purple-950/40 border-b border-purple-500/30 flex items-center space-x-3 text-purple-300 text-xs font-mono">
+            <AlertCircle className="w-4 h-4 text-purple-400 shrink-0" />
+            <span>Welcome Sir! Enter your API key below. Settings persist permanently across all reboots.</span>
+          </div>
+        )}
+
+        {/* Modal Form */}
         <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
           {/* Provider Selection Tabs */}
           <div>
@@ -43,7 +59,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
             </label>
             <div className="grid grid-cols-3 gap-3">
               {[
-                { id: 'gemini', label: 'Google Gemini 2.0' },
+                { id: 'gemini', label: 'Google Gemini' },
                 { id: 'openrouter', label: 'OpenRouter (Multi-Model)' },
                 { id: 'custom', label: 'Groq / Custom API' }
               ].map((prov) => (
@@ -63,7 +79,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
             </div>
           </div>
 
-          {/* 1. Google Gemini 2.0 Engine Configuration */}
+          {/* 1. Google Gemini Config */}
           {formData.provider === 'gemini' && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-4">
               <div>
@@ -100,30 +116,22 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
 
               <div className="pt-2 border-t border-slate-800/80">
                 <label className="text-xs font-mono uppercase text-purple-300 block mb-1">
-                  Fail-Safe OpenRouter Backup Key (Zero Rate-Limit)
+                  Fail-Safe OpenRouter Key (Automatic Backup on Rate Limit)
                 </label>
                 <input
                   type="password"
                   value={formData.openrouterKey || ''}
                   onChange={(e) => handleChange('openrouterKey', e.target.value)}
-                  placeholder="sk-or-v1-... (Used if Gemini quota exhausts)"
+                  placeholder="sk-or-v1-..."
                   className="w-full px-3.5 py-2 bg-slate-900/80 border border-slate-800 rounded-xl text-xs text-purple-300 focus:outline-none focus:border-purple-400 font-mono"
                 />
               </div>
             </div>
           )}
 
-          {/* 2. OpenRouter Universal Engine Configuration */}
+          {/* 2. OpenRouter Config */}
           {formData.provider === 'openrouter' && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-4 shadow-[0_0_20px_rgba(168,85,247,0.15)]">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono uppercase text-purple-300 font-bold flex items-center space-x-1.5">
-                  <Sparkles className="w-4 h-4 text-purple-400" />
-                  <span>OpenRouter Universal Gateway</span>
-                </span>
-                <span className="text-[10px] font-mono text-emerald-400">Zero Rate-Limit Failover</span>
-              </div>
-
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
                   OpenRouter API Key
@@ -139,7 +147,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
 
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Model Identifier (Select Free or Type Custom)
+                  OpenRouter Model ID
                 </label>
                 <input
                   list="openrouter-models"
@@ -161,11 +169,11 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
             </div>
           )}
 
-          {/* 3. Groq or Custom Endpoint */}
+          {/* 3. Groq / Custom Endpoint */}
           {formData.provider === 'custom' && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
               <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Base URL</label>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Base Endpoint URL</label>
                 <input
                   type="text"
                   value={formData.customBaseURL || 'https://api.groq.com/openai/v1'}
@@ -175,7 +183,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
                 />
               </div>
               <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">API Key</label>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">API Key / Token</label>
                 <input
                   type="password"
                   value={formData.customKey || ''}
@@ -197,13 +205,11 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
             </div>
           )}
 
-          {/* Natural Voice Persona */}
+          {/* Voice Engine */}
           <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
             <div className="flex items-center space-x-2 text-cyan-400">
               <Mic className="w-4 h-4" />
-              <label className="text-xs font-mono uppercase text-slate-300 font-bold">
-                Speech Voice Persona
-              </label>
+              <label className="text-xs font-mono uppercase text-slate-300 font-bold">Natural Voice Persona</label>
             </div>
             <select
               value={formData.voice || 'en-US-AriaNeural'}
@@ -220,18 +226,17 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
 
         {/* Footer */}
         <div className="flex justify-end items-center px-6 py-4 bg-[#0a1028] border-t border-slate-800 space-x-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white"
-          >
-            Cancel
-          </button>
+          {!isFirstRun && (
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white transition">
+              Cancel
+            </button>
+          )}
           <button
             onClick={handleSave}
             className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(168,85,247,0.4)]"
           >
-            <Save className="w-4 h-4" />
-            <span>Apply Changes</span>
+            {savedSuccess ? <CheckCircle className="w-4 h-4 text-emerald-300" /> : <Save className="w-4 h-4" />}
+            <span>{savedSuccess ? 'Saved Permanently!' : 'Apply & Persist Changes'}</span>
           </button>
         </div>
       </div>
