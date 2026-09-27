@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Save, Sliders, Globe, Mic, Key, Server, Cpu } from 'lucide-react';
+import { X, Save, Sliders, Globe, Mic, Key, Server, Cpu, Sparkles, ShieldCheck } from 'lucide-react';
 
 export default function SettingsModal({ isOpen, onClose, currentSettings, onSave }) {
   const [formData, setFormData] = useState(currentSettings);
@@ -7,7 +7,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
   if (!isOpen) return null;
 
   const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSave = () => {
@@ -16,17 +16,20 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-[#060a17] border border-cyan-500/50 rounded-3xl shadow-[0_0_50px_rgba(0,240,255,0.3)] overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-cyan-500/20 bg-[#091024]">
-          <div className="flex items-center space-x-3 text-cyan-400">
-            <Sliders className="w-5 h-5 animate-spin-slow" />
+    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4">
+      <div className="w-full max-w-2xl bg-[#060a1a] border border-purple-500/40 rounded-3xl shadow-[0_0_60px_rgba(147,51,234,0.3)] overflow-hidden flex flex-col">
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0a1028]">
+          <div className="flex items-center space-x-2.5 text-purple-400">
+            <Sliders className="w-5 h-5" />
             <h2 className="font-mono font-bold text-sm tracking-widest uppercase">
-              NOVA SYSTEM CORE SETTINGS
+              NOVA AI // MULTI-MODEL BRAIN CONFIG
             </h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+          <button
+            onClick={onClose}
+            className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -35,32 +38,86 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
         <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
           {/* Provider Selection Tabs */}
           <div>
-            <label className="text-xs font-mono uppercase text-slate-400 block mb-2 font-bold tracking-wider">
-              AI ENGINE PROVIDER
+            <label className="text-xs font-mono uppercase text-slate-400 block mb-2 font-semibold tracking-wider">
+              Cognitive Engine Gateway
             </label>
             <div className="grid grid-cols-3 gap-3">
               {[
-                { id: 'gemini', label: 'Google Gemini' },
-                { id: 'openai', label: 'OpenAI Standard' },
-                { id: 'custom', label: 'Custom / Local AI' }
-              ].map(item => (
+                { id: 'openrouter', label: 'OpenRouter (Multi-Model)' },
+                { id: 'gemini', label: 'Google Gemini 2.0' },
+                { id: 'custom', label: 'Custom / Local API' }
+              ].map((prov) => (
                 <button
-                  key={item.id}
+                  key={prov.id}
                   type="button"
-                  onClick={() => handleChange('provider', item.id)}
-                  className={`py-3 px-3 rounded-xl border text-xs font-mono uppercase tracking-wider transition ${
-                    formData.provider === item.id
-                      ? 'border-cyan-400 bg-cyan-500/20 text-cyan-300 shadow-[0_0_20px_rgba(0,240,255,0.4)] font-bold'
+                  onClick={() => handleChange('provider', prov.id)}
+                  className={`py-3 px-3 rounded-2xl border text-xs font-mono uppercase tracking-wider transition ${
+                    formData.provider === prov.id
+                      ? 'border-purple-400 bg-purple-600/25 text-purple-200 shadow-[0_0_20px_rgba(168,85,247,0.35)] font-bold'
                       : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700'
                   }`}
                 >
-                  {item.label}
+                  {prov.label}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* 1. Google Gemini Config */}
+          {/* 1. OpenRouter Multi-Model Engine (2026 Core Integration) */}
+          {formData.provider === 'openrouter' && (
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-4 shadow-[0_0_20px_rgba(168,85,247,0.15)]">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono uppercase text-purple-300 font-bold flex items-center space-x-1.5">
+                  <Sparkles className="w-4 h-4 text-purple-400" />
+                  <span>OpenRouter Universal Gateway</span>
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400">Zero Rate-Limit Failover</span>
+              </div>
+
+              <div>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
+                  OpenRouter API Key
+                </label>
+                <input
+                  type="password"
+                  value={formData.openrouterKey || ''}
+                  onChange={(e) => handleChange('openrouterKey', e.target.value)}
+                  placeholder="sk-or-v1-..."
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-purple-300 focus:outline-none focus:border-purple-400 font-mono"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-mono uppercase text-slate-300">
+                    Active OpenRouter Model ID
+                  </label>
+                  <span className="text-[10px] text-purple-400 font-mono">Custom or Free Select</span>
+                </div>
+                <input
+                  list="openrouter-models"
+                  type="text"
+                  value={formData.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free'}
+                  onChange={(e) => handleChange('openrouterModel', e.target.value)}
+                  placeholder="e.g. deepseek/deepseek-r1:free, anthropic/claude-3.5-sonnet"
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-purple-400 font-mono"
+                />
+                <datalist id="openrouter-models">
+                  <option value="meta-llama/llama-3.3-70b-instruct:free" />
+                  <option value="deepseek/deepseek-r1:free" />
+                  <option value="qwen/qwen-2.5-72b-instruct:free" />
+                  <option value="google/gemini-2.0-flash-exp:free" />
+                  <option value="anthropic/claude-3.5-sonnet" />
+                  <option value="openai/gpt-4o" />
+                </datalist>
+                <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                  Select free 2026 models or enter your custom model tag.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 2. Google Gemini 2.0 Engine */}
           {formData.provider === 'gemini' && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-4">
               <div>
@@ -78,14 +135,14 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
 
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Gemini Model ID (Custom or Preset)
+                  Gemini Model Variant
                 </label>
                 <input
                   list="gemini-presets"
                   type="text"
                   value={formData.geminiModel || 'gemini-2.0-flash'}
                   onChange={(e) => handleChange('geminiModel', e.target.value)}
-                  placeholder="gemini-2.0-flash, gemini-1.5-flash"
+                  placeholder="gemini-2.0-flash, gemini-1.5-pro"
                   className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
                 />
                 <datalist id="gemini-presets">
@@ -94,118 +151,93 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
                   <option value="gemini-1.5-pro" />
                 </datalist>
               </div>
+
+              {/* Automatic Fallback Switch */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                <span className="text-xs font-mono text-slate-300">
+                  Auto-Failover to OpenRouter on Gemini Quota Limit
+                </span>
+                <input
+                  type="checkbox"
+                  checked={formData.autoFailover !== false}
+                  onChange={(e) => handleChange('autoFailover', e.target.checked)}
+                  className="w-4 h-4 accent-purple-500"
+                />
+              </div>
             </div>
           )}
 
-          {/* 2. OpenAI Config */}
-          {formData.provider === 'openai' && (
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-4">
+          {/* 3. Custom Gateway Settings */}
+          {formData.provider === 'custom' && (
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
               <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">OpenAI API Key</label>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Base URL</label>
+                <input
+                  type="text"
+                  value={formData.customBaseURL || ''}
+                  onChange={(e) => handleChange('customBaseURL', e.target.value)}
+                  placeholder="http://localhost:11434/v1"
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">API Key</label>
                 <input
                   type="password"
-                  value={formData.openaiKey || ''}
-                  onChange={(e) => handleChange('openaiKey', e.target.value)}
-                  placeholder="sk-proj-..."
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
+                  value={formData.customKey || ''}
+                  onChange={(e) => handleChange('customKey', e.target.value)}
+                  placeholder="Secret key"
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
                 />
               </div>
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Model Name</label>
                 <input
                   type="text"
-                  value={formData.openaiModel || 'gpt-4o'}
-                  onChange={(e) => handleChange('openaiModel', e.target.value)}
-                  placeholder="gpt-4o, gpt-4o-mini"
+                  value={formData.customModel || ''}
+                  onChange={(e) => handleChange('customModel', e.target.value)}
+                  placeholder="llama-3.3, mistral"
                   className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
                 />
               </div>
             </div>
           )}
 
-          {/* 3. Custom AI Gateway (Groq, DeepSeek, Ollama, OpenRouter, xkiro, etc.) */}
-          {formData.provider === 'custom' && (
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/40 space-y-4 shadow-[0_0_20px_rgba(168,85,247,0.15)]">
-              <div className="flex items-center space-x-2 text-purple-400">
-                <Server className="w-4 h-4" />
-                <span className="text-xs font-mono uppercase font-bold">Custom OpenAI-Compatible Endpoint</span>
-              </div>
-
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Base URL (Endpoint)
-                </label>
-                <input
-                  type="text"
-                  value={formData.customBaseURL || ''}
-                  onChange={(e) => handleChange('customBaseURL', e.target.value)}
-                  placeholder="e.g. https://api.groq.com/openai/v1 or http://localhost:11434/v1"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-purple-400 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  API Key / Token (Leave blank if local Ollama)
-                </label>
-                <input
-                  type="password"
-                  value={formData.customKey || ''}
-                  onChange={(e) => handleChange('customKey', e.target.value)}
-                  placeholder="gsk_... or sk-..."
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-purple-400 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Model ID (Unique Identifier)
-                </label>
-                <input
-                  type="text"
-                  value={formData.customModel || ''}
-                  onChange={(e) => handleChange('customModel', e.target.value)}
-                  placeholder="e.g. deepseek-chat, llama-3.3-70b-versatile, qwen2.5"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-purple-400 font-mono"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Voice & Language Settings */}
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/20 space-y-4">
+          {/* Natural Voice Persona */}
+          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
             <div className="flex items-center space-x-2 text-cyan-400">
               <Mic className="w-4 h-4" />
               <label className="text-xs font-mono uppercase text-slate-300 font-bold">
-                NOVA Voice Accent & Language (Urdu / Hindi / English)
+                Speech Voice Persona
               </label>
             </div>
             <select
-              value={formData.voice || 'ur-PK-UzmaNeural'}
+              value={formData.voice || 'en-US-AriaNeural'}
               onChange={(e) => handleChange('voice', e.target.value)}
               className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-cyan-400 font-mono"
             >
-              <option value="ur-PK-UzmaNeural">Uzma (Urdu - Pakistan Female) [اردو]</option>
-              <option value="ur-PK-AsadNeural">Asad (Urdu - Pakistan Male) [اردو]</option>
-              <option value="hi-IN-SwaraNeural">Swara (Hindi Female) [हिंदी / اردو]</option>
-              <option value="hi-IN-MadhurNeural">Madhur (Hindi Male) [हिंदी / اردو]</option>
-              <option value="en-US-AriaNeural">Aria (English Female - Natural)</option>
-              <option value="en-US-GuyNeural">Guy (English Male - Deep)</option>
+              <option value="en-US-AriaNeural">Aria (English Female - Natural Executive)</option>
+              <option value="en-US-GuyNeural">Guy (English Male - Deep Tactical)</option>
+              <option value="ur-PK-UzmaNeural">Uzma (Urdu Female - Pakistan)</option>
+              <option value="hi-IN-SwaraNeural">Swara (Hindi Female - India)</option>
             </select>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end items-center px-6 py-4 bg-[#091024] border-t border-slate-800 space-x-3">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white">
+        <div className="flex justify-end items-center px-6 py-4 bg-[#0a1028] border-t border-slate-800 space-x-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white"
+          >
             Cancel
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(0,240,255,0.4)]"
+            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(168,85,247,0.4)]"
           >
             <Save className="w-4 h-4" />
-            <span>Save & Apply Matrix</span>
+            <span>Apply Changes</span>
           </button>
         </div>
       </div>
