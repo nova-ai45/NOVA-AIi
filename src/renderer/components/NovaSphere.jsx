@@ -9,211 +9,174 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
     const ctx = canvas.getContext('2d');
     let animationFrameId;
 
-    const width = (canvas.width = 620);
-    const height = (canvas.height = 540);
+    const width = (canvas.width = 680);
+    const height = (canvas.height = 360);
 
-    let angleX = 0;
-    let angleY = 0;
-    let blinkTimer = 0;
-    let eyeBlinkProgress = 0;
-
-    const particles = Array.from({ length: 65 }, () => ({
-      x: (Math.random() - 0.5) * 260,
-      y: (Math.random() - 0.5) * 260,
-      z: (Math.random() - 0.5) * 260,
-      radius: Math.random() * 2 + 1,
-      speed: Math.random() * 0.015 + 0.005,
-      color: Math.random() > 0.4 ? '#00f0ff' : '#a855f7'
-    }));
+    let angle = 0;
+    const waveformPoints = 48;
 
     const render = () => {
       ctx.clearRect(0, 0, width, height);
+
       const centerX = width / 2;
-      const centerY = height / 2 - 25;
+      const centerY = height / 2;
 
-      let speedMultiplier = 1;
-      let coreColorStart = '#00f0ff';
-      let coreColorEnd = '#9333ea';
-      let eyeGlow = '#00f0ff';
+      // Dynamic states color & multiplier
+      let coreColor = '#ff7b00';
+      let ringColor = 'rgba(255, 130, 0, 0.7)';
+      let glowColor = 'rgba(255, 120, 0, 0.4)';
+      let speed = 0.015;
 
-      if (state === 'thinking') {
-        speedMultiplier = 2.6;
-        coreColorStart = '#a855f7';
-        coreColorEnd = '#ec4899';
-        eyeGlow = '#f43f5e';
+      if (state === 'listening') {
+        coreColor = '#ff9900';
+        ringColor = 'rgba(255, 160, 0, 0.9)';
+        glowColor = 'rgba(255, 140, 0, 0.6)';
+        speed = 0.035;
+      } else if (state === 'thinking') {
+        coreColor = '#00f0ff';
+        ringColor = 'rgba(0, 240, 255, 0.8)';
+        glowColor = 'rgba(0, 240, 255, 0.5)';
+        speed = 0.06;
       } else if (state === 'speaking') {
-        speedMultiplier = 1.6;
-        coreColorStart = '#38bdf8';
-        coreColorEnd = '#6366f1';
-        eyeGlow = '#38bdf8';
-      } else if (state === 'listening') {
-        speedMultiplier = 1.3;
-        coreColorStart = '#06b6d4';
-        coreColorEnd = '#3b82f6';
-        eyeGlow = '#22d3ee';
-      } else if (state === 'executing') {
-        speedMultiplier = 2.0;
-        coreColorStart = '#10b981';
-        coreColorEnd = '#06b6d4';
-        eyeGlow = '#34d399';
+        coreColor = '#ffaa00';
+        ringColor = 'rgba(255, 190, 0, 1)';
+        glowColor = 'rgba(255, 170, 0, 0.8)';
+        speed = 0.025;
       }
 
-      angleY += 0.012 * speedMultiplier;
-      angleX += 0.006 * speedMultiplier;
+      angle += speed;
 
-      // Concentric Floor Pedestal Rings
-      const pedestalY = centerY + 175;
-      for (let r = 3; r >= 1; r--) {
+      // 1. Background Grid & Radar Crosshairs
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 120, 0, 0.08)';
+      ctx.lineWidth = 1;
+      for (let x = 40; x < width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 30; y < height; y += 30) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // 2. Central Concentric Glowing Amber Rings
+      const ringRadii = [40, 65, 88, 110];
+      ringRadii.forEach((radius, idx) => {
         ctx.save();
         ctx.beginPath();
-        ctx.ellipse(centerX, pedestalY + r * 6, 170 - r * 28, (170 - r * 28) * 0.28, 0, 0, Math.PI * 2);
-        ctx.strokeStyle = r === 1 ? 'rgba(0, 240, 255, 0.75)' : 'rgba(147, 51, 234, 0.35)';
-        ctx.lineWidth = r === 1 ? 2.5 : 1.5;
-        ctx.shadowColor = '#00f0ff';
-        ctx.shadowBlur = r === 1 ? 16 : 8;
+        const pulse = state === 'speaking' || state === 'listening' ? Math.sin(Date.now() / 150 + idx) * 3 : 0;
+        ctx.arc(centerX, centerY, radius + pulse, 0, Math.PI * 2);
+
+        if (idx === 1) {
+          ctx.setLineDash([4, 6]);
+          ctx.strokeStyle = ringColor;
+          ctx.lineWidth = 1.5;
+        } else if (idx === 2) {
+          ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)'; // Subtle cyan contrast ring from image
+          ctx.lineWidth = 1.2;
+        } else {
+          ctx.strokeStyle = ringColor;
+          ctx.lineWidth = idx === 0 ? 2 : 1;
+        }
+
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 15;
         ctx.stroke();
         ctx.restore();
-      }
+      });
 
-      // Vertical Upward Pedestal Light Cone
-      const beamGrad = ctx.createLinearGradient(centerX, pedestalY, centerX, centerY + 40);
-      beamGrad.addColorStop(0, 'rgba(0, 240, 255, 0.22)');
-      beamGrad.addColorStop(0.5, 'rgba(147, 51, 234, 0.1)');
-      beamGrad.addColorStop(1, 'transparent');
-      ctx.fillStyle = beamGrad;
-      ctx.beginPath();
-      ctx.moveTo(centerX - 130, pedestalY);
-      ctx.lineTo(centerX + 130, pedestalY);
-      ctx.lineTo(centerX + 50, centerY + 50);
-      ctx.lineTo(centerX - 50, centerY + 50);
-      ctx.closePath();
-      ctx.fill();
-
-      // Swirling Orbit Particles
-      particles.forEach((p) => {
-        const radY = angleY * p.speed * 80;
-        const radX = angleX * p.speed * 80;
-
-        const cosY = Math.cos(radY);
-        const sinY = Math.sin(radY);
-        const x1 = p.x * cosY - p.z * sinY;
-        const z1 = p.z * cosY + p.x * sinY;
-
-        const cosX = Math.cos(radX);
-        const sinX = Math.sin(radX);
-        const y2 = p.y * cosX - z1 * sinX;
-        const z2 = z1 * cosX + p.y * sinX;
-
-        const fov = 350;
-        const scale = fov / (fov + z2 + 200);
-        const projX = centerX + x1 * scale;
-        const projY = centerY + y2 * scale;
-
+      // 3. Orbiting Nodes (Dots on rings from image)
+      const orbitNodes = [
+        { r: 65, spd: angle * 1.5, col: '#ffaa00' },
+        { r: 88, spd: -angle * 1.2, col: '#00e5ff' },
+        { r: 110, spd: angle * 0.8, col: '#ff7700' }
+      ];
+      orbitNodes.forEach((node) => {
+        const nx = centerX + Math.cos(node.spd) * node.r;
+        const ny = centerY + Math.sin(node.spd) * node.r;
         ctx.save();
         ctx.beginPath();
-        ctx.arc(projX, projY, Math.max(0.5, p.radius * scale), 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.shadowColor = p.color;
+        ctx.arc(nx, ny, 3, 0, Math.PI * 2);
+        ctx.fillStyle = node.col;
+        ctx.shadowColor = node.col;
         ctx.shadowBlur = 10;
-        ctx.globalAlpha = Math.min(1, Math.max(0.2, (z2 + 200) / 400));
         ctx.fill();
         ctx.restore();
       });
 
-      // Holographic Orbit Rings
-      const ringScale = 1 + Math.sin(Date.now() / 600) * 0.03 + (state === 'speaking' ? audioLevel * 0.25 : 0);
-      for (let i = 0; i < 2; i++) {
-        ctx.save();
-        ctx.translate(centerX, centerY);
-        ctx.rotate(i === 0 ? 0.38 : -0.45);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 155 * ringScale, 55 * ringScale, i === 0 ? angleY : -angleY * 1.3, 0, Math.PI * 2);
-        ctx.strokeStyle = i === 0 ? 'rgba(0, 240, 255, 0.65)' : 'rgba(168, 85, 247, 0.65)';
-        ctx.lineWidth = 1.8;
-        ctx.shadowColor = i === 0 ? '#00f0ff' : '#a855f7';
-        ctx.shadowBlur = 14;
-        ctx.setLineDash([12, 10]);
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Central Orb Core
-      const baseRadius = 88;
-      const pulse = state === 'speaking'
-        ? baseRadius + audioLevel * 35
-        : state === 'thinking'
-        ? baseRadius + Math.sin(Date.now() / 150) * 6
-        : baseRadius + Math.sin(Date.now() / 450) * 4;
-
-      const coreGradient = ctx.createRadialGradient(
-        centerX - 20,
-        centerY - 25,
-        10,
-        centerX,
-        centerY,
-        pulse
-      );
-      coreGradient.addColorStop(0, '#ffffff');
-      coreGradient.addColorStop(0.25, coreColorStart);
-      coreGradient.addColorStop(0.7, coreColorEnd);
-      coreGradient.addColorStop(1, 'rgba(3, 7, 18, 0.1)');
-
+      // 4. Horizontal Audio Equalizer Spectrum Passing Through Center
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, pulse, 0, Math.PI * 2);
-      ctx.fillStyle = coreGradient;
-      ctx.shadowColor = coreColorStart;
-      ctx.shadowBlur = 45;
-      ctx.fill();
+      const waveAmplitude = state === 'speaking' ? audioLevel * 75 : state === 'listening' ? audioLevel * 45 : 8;
+      const barWidth = 3;
+      const spacing = (width - 80) / waveformPoints;
+
+      for (let i = 0; i < waveformPoints; i++) {
+        const x = 40 + i * spacing;
+        const distFromCenter = Math.abs(x - centerX);
+
+        // Suppress waveform inside the inner core circle
+        if (distFromCenter < 35) continue;
+
+        const factor = Math.sin((i / waveformPoints) * Math.PI);
+        const dynamicH = Math.max(3, Math.sin(angle * 4 + i * 0.4) * waveAmplitude * factor);
+
+        const grad = ctx.createLinearGradient(x, centerY - dynamicH, x, centerY + dynamicH);
+        grad.addColorStop(0, '#ff9900');
+        grad.addColorStop(0.5, '#ff5500');
+        grad.addColorStop(1, '#ff9900');
+
+        ctx.fillStyle = grad;
+        ctx.shadowColor = 'rgba(255, 120, 0, 0.7)';
+        ctx.shadowBlur = 6;
+        ctx.fillRect(x, centerY - dynamicH, barWidth, dynamicH * 2);
+      }
       ctx.restore();
 
-      // Outer Rim Glass Border
+      // 5. Central Microphone Glow Field
       ctx.save();
       ctx.beginPath();
-      ctx.arc(centerX, centerY, pulse, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.arc(centerX, centerY, 28, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(16, 18, 26, 0.85)';
+      ctx.strokeStyle = coreColor;
       ctx.lineWidth = 2;
-      ctx.shadowColor = '#00f0ff';
+      ctx.shadowColor = coreColor;
       ctx.shadowBlur = 20;
+      ctx.fill();
       ctx.stroke();
       ctx.restore();
 
-      // Expressive Vertical Capsule Eyes
-      blinkTimer++;
-      if (blinkTimer > 180 && blinkTimer < 192) {
-        eyeBlinkProgress = (blinkTimer - 180) / 12;
-      } else if (blinkTimer >= 192 && blinkTimer < 204) {
-        eyeBlinkProgress = 1 - (blinkTimer - 192) / 12;
-      } else if (blinkTimer >= 204) {
-        blinkTimer = 0;
-        eyeBlinkProgress = 0;
-      }
+      // Draw Center Microphone Icon via Path
+      ctx.save();
+      ctx.strokeStyle = coreColor;
+      ctx.fillStyle = coreColor;
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = coreColor;
+      ctx.shadowBlur = 10;
 
-      const eyeWidth = 14;
-      const eyeBaseHeight = 44;
-      const dynamicEyeHeight = Math.max(
-        3,
-        (state === 'speaking' ? eyeBaseHeight + audioLevel * 14 : eyeBaseHeight) * (1 - eyeBlinkProgress)
-      );
-      const eyeSpacing = 24;
+      // Mic Capsule
+      ctx.beginPath();
+      ctx.roundRect(centerX - 4.5, centerY - 11, 9, 14, 4.5);
+      ctx.stroke();
 
-      [-eyeSpacing, eyeSpacing].forEach((offset) => {
-        ctx.save();
-        ctx.beginPath();
-        const eyeX = centerX + offset - eyeWidth / 2;
-        const eyeY = centerY - dynamicEyeHeight / 2;
-        ctx.roundRect(eyeX, eyeY, eyeWidth, dynamicEyeHeight, eyeWidth / 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = eyeGlow;
-        ctx.shadowBlur = 24;
-        ctx.fill();
+      // Mic Stand Arc
+      ctx.beginPath();
+      ctx.arc(centerX, centerY - 4, 8, 0, Math.PI);
+      ctx.stroke();
 
-        ctx.beginPath();
-        ctx.roundRect(eyeX + 2, eyeY + 2, eyeWidth - 4, Math.max(1, dynamicEyeHeight - 4), (eyeWidth - 4) / 2);
-        ctx.fillStyle = eyeGlow;
-        ctx.fill();
-        ctx.restore();
-      });
+      // Mic Stand Stem & Base
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY + 4);
+      ctx.lineTo(centerX, centerY + 10);
+      ctx.moveTo(centerX - 5, centerY + 10);
+      ctx.lineTo(centerX + 5, centerY + 10);
+      ctx.stroke();
+      ctx.restore();
 
       animationFrameId = requestAnimationFrame(render);
     };
@@ -227,7 +190,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
 
   return (
     <div className="relative flex items-center justify-center w-full h-full select-none pointer-events-none">
-      <canvas ref={canvasRef} className="max-w-full max-h-full" />
+      <canvas ref={canvasRef} className="w-full h-full" />
     </div>
   );
 }
