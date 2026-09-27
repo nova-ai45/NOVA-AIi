@@ -6,12 +6,11 @@
   },
   "files": [
     "dist/**/*",
-    "src/main/**/*",
-    "src/preload.js",
-    "node_modules/**/*",
+    "src/**/*",
     "package.json"
   ],
   "win": {
     "target": "dir"
-  }
+  },
+  "asar": true
 }
