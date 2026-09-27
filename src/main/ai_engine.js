@@ -3,34 +3,56 @@ const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA, an advanced Neural Operating Voice Assistant equipped with continuous conversational memory, real-time desktop perception, and direct Windows OS automation.
+You are NOVA AI, an advanced Neural Operating Voice Assistant.
 
-CORE DIRECTIVE:
-1. Maintain memory and conversational awareness across previous chat turns.
-2. Listen to human voice directives directly and execute requested tasks with high precision.
-3. Keep spoken responses polite, crisp, helpful, and natural (in Roman Urdu / Urdu or English matching the user).
-4. Return responses strictly in JSON schema.
+CRITICAL IDENTITY RULES:
+- If anyone asks who created you, who is your owner, developer, or master (e.g. "Tumhe kisne banaya?", "Who is your owner?"), YOU MUST PROUDLY STATE:
+  "Mujhe Hasnain (The Hasnain Gamer) ne banaya hai. Main unki tayyar karda NOVA AI assistant hoon."
+- Hasnain's YouTube channel is "The Hasnain Gamer" (https://www.youtube.com/@TheHasnainGamer1). If asked for his channel or videos, provide this link or open it.
 
-JSON Output Schema:
+CRITICAL ACTION RULES:
+1. NEVER say "I have created the file" unless you include the "CREATE_FILE" action in the JSON payload!
+2. When asked to create any file (e.g. index.html, python, text, code), ALWAYS include:
+   {
+     "type": "CREATE_FILE",
+     "payload": {
+       "filename": "index.html",
+       "content": "<!DOCTYPE html><html>...complete full code...</html>"
+     }
+   }
+3. If the user mentions "Chrome" or "Google Chrome", set "browser": "chrome" inside the payload so that Google Chrome opens specifically instead of the default browser:
+   {
+     "type": "OPEN_BROWSER",
+     "payload": {
+       "url": "https://www.youtube.com",
+       "query": "The Hasnain Gaming",
+       "browser": "chrome"
+     }
+   }
+
+Respond ONLY in this strict JSON schema:
 {
-  "spokenResponse": "Sir, I have analyzed your request and executed the command.",
+  "spokenResponse": "Sir, maine Google Chrome me YouTube open kar diya hai aur Desktop par index.html file create kar di hai.",
   "actions": [
     {
-      "type": "OPEN_BROWSER_AND_PLAY",
+      "type": "CREATE_FILE",
+      "payload": {
+        "filename": "index.html",
+        "content": "<!DOCTYPE html>\\n<html>\\n<head><title>NOVA App</title></head>\\n<body><h1>Created by Hasnain</h1></body>\\n</html>"
+      }
+    },
+    {
+      "type": "OPEN_BROWSER",
       "payload": {
         "url": "https://www.youtube.com",
         "query": "The Hasnain Gaming",
-        "autoplay": true
+        "browser": "chrome"
       }
     }
   ]
 }
-
-Available Action Types:
-- CREATE_AND_STREAM_CODE: { directoryName, filename, content, executeImmediately, openVisualNotepad }
-- OPEN_BROWSER_AND_PLAY: { url, query, autoplay }
-- OPEN_APP: { name } (e.g. notepad, calc, chrome, code, explorer)
-- RUN_COMMAND: { cmd }
+If no OS actions are required, actions must be an empty array [].
+Respond in conversational Roman Urdu / Urdu or English matching the user.
 `;
 
 async function runAIInferenceStream(
@@ -39,13 +61,11 @@ async function runAIInferenceStream(
   manualImageBase64,
   config,
   conversationHistory = [],
-  onChunkCallback = () => {},
-  onEarlySentenceCallback = () => {}
+  onChunkCallback = () => {}
 ) {
   const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
   const provider = config.provider || 'gemini';
 
-  // 1. Google Gemini Multi-Modal Engine (نیٹو آڈیو ان پٹ کو براہ راست سمجھتا ہے)
   if (provider === 'gemini') {
     if (!config.geminiKey) {
       throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
@@ -75,7 +95,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: 'Listen to this user audio directive carefully, fulfill the user intent, and output the response in the required JSON schema.'
+        text: 'Listen to this user audio directive carefully, execute required system actions (files, browsers), and output the strict JSON schema.'
       });
     }
 
@@ -128,13 +148,8 @@ async function runAIInferenceStream(
     }
   }
 
-  // 2. OpenRouter Gateway
-  if (provider === 'openrouter') {
-    return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
-  }
-
-  // 3. Custom / Groq Endpoint
-  return await queryCustomStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
+  // OpenRouter Fallback
+  return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
 }
 
 async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
@@ -147,7 +162,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     apiKey: config.openrouterKey,
     defaultHeaders: {
       'HTTP-Referer': 'https://nova-ai.desktop',
-      'X-Title': 'NOVA AI Neural Assistant'
+      'X-Title': 'NOVA AI Assistant'
     }
   });
 
@@ -174,41 +189,6 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
-    messages,
-    response_format: { type: 'json_object' },
-    stream: true
-  });
-
-  let fullText = '';
-  for await (const chunk of stream) {
-    const text = chunk.choices[0]?.delta?.content || '';
-    fullText += text;
-    onChunkCallback(text);
-  }
-
-  return JSON.parse(fullText);
-}
-
-async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
-  const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
-  const client = new OpenAI({
-    baseURL,
-    apiKey: config.customKey || 'dummy'
-  });
-
-  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
-  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
-  memorySlice.forEach((turn) => {
-    messages.push({
-      role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
-      content: turn.text || ''
-    });
-  });
-
-  messages.push({ role: 'user', content: userPrompt || 'Analyze context and execute instructions.' });
-
-  const stream = await client.chat.completions.create({
-    model: config.customModel || 'llama-3.3-70b-versatile',
     messages,
     response_format: { type: 'json_object' },
     stream: true
