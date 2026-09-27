@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, session, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -27,7 +27,7 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// 3. Single Instance Enforcement
+// 3. Single Instance Lock
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -44,12 +44,11 @@ try { ttsEngine = require('./tts_engine'); } catch (e) { logEmergencyCrash('TTS 
 try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Load', e); }
 
 let mainWindow = null;
-let tray = null;
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
-  geminiModel: 'gemini-2.0-flash',
+  geminiModel: 'gemini-2.5-flash',
   openrouterKey: '',
   openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
   openaiKey: '',
@@ -147,7 +146,7 @@ function resolveIndexPath() {
 function createWindow() {
   const preloadResolved = resolvePreloadPath();
 
-  // Native Windows frame enabled; custom borderless frame removed
+  // Native Windows frame enabled: OS-native minimize, maximize, and clean exit
   mainWindow = new BrowserWindow({
     title: 'NOVA AI',
     width: 1340,
@@ -174,11 +173,19 @@ function createWindow() {
     loadProductionBuild(mainWindow);
   }
 
-  mainWindow.on('close', (e) => {
-    if (!app.isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
+  // Absolute privacy shutdown: when window is closed, cleanly tear down the entire application
+  mainWindow.on('close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('nova:systemShutdown');
     }
+    if (ttsEngine && ttsEngine.cancelActiveTTS) {
+      ttsEngine.cancelActiveTTS();
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    app.quit();
   });
 }
 
@@ -198,31 +205,11 @@ function loadProductionBuild(targetWindow) {
   }
 }
 
-function setupSystemTray() {
-  try {
-    const iconPath = path.join(__dirname, '../../public/favicon.ico');
-    const trayIcon = fs.existsSync(iconPath) ? iconPath : null;
-    tray = new Tray(trayIcon || path.join(app.getAppPath(), 'dist/favicon.ico'));
-    const contextMenu = Menu.buildFromTemplate([
-      { label: 'Open NOVA AI', click: () => { mainWindow.show(); mainWindow.focus(); } },
-      { type: 'separator' },
-      { label: 'Quit NOVA', click: () => { app.isQuitting = true; app.quit(); } }
-    ]);
-    tray.setToolTip('NOVA AI - Voice Assistant');
-    tray.setContextMenu(contextMenu);
-    tray.on('double-click', () => {
-      mainWindow.show();
-      mainWindow.focus();
-    });
-  } catch (_) {}
-}
-
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, callback) => callback(true));
   session.defaultSession.setPermissionCheckHandler(() => true);
 
   createWindow();
-  setupSystemTray();
 
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
@@ -272,12 +259,34 @@ app.whenReady().then(() => {
 
       if (text) broadcastLog('command', `User Directive: "${text}"`);
 
-      if (!aiEngine || !aiEngine.runAIInference) {
+      if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
       }
 
-      const aiResponse = await aiEngine.runAIInference(text, audioBase64, visionData, config);
+      // Ultra-low latency streaming inference
+      const aiResponse = await aiEngine.runAIInferenceStream(
+        text,
+        audioBase64,
+        visionData,
+        config,
+        (streamChunk) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
+          }
+        },
+        async (earlySentence) => {
+          // Immediately synthesize speech on the very first completed sentence
+          if (config.autoSpeak && ttsEngine && ttsEngine.synthesizeAudioStream) {
+            broadcastState('speaking');
+            const earlyAudio = await ttsEngine.synthesizeAudioStream(earlySentence, config.voice || 'en-US-AriaNeural');
+            if (earlyAudio && mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('nova:earlyAudioChunk', earlyAudio);
+            }
+          }
+        }
+      );
 
+      // Execute OS automation commands
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -287,7 +296,6 @@ app.whenReady().then(() => {
 
       let audioResult = null;
       if (config.autoSpeak && aiResponse.spokenResponse && ttsEngine && ttsEngine.synthesizeAudioStream) {
-        broadcastState('speaking');
         audioResult = await ttsEngine.synthesizeAudioStream(aiResponse.spokenResponse, config.voice || 'en-US-AriaNeural');
       }
 
@@ -329,8 +337,11 @@ app.on('second-instance', () => {
   }
 });
 
+// Absolute privacy cleanup on app close
+app.on('before-quit', () => {
+  app.isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
