@@ -2,134 +2,169 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA, an advanced Neural Desktop Operating Voice Assistant.
-You have direct control over the user's PC operating system and live screen vision.
+You are NOVA, an advanced Neural Operating Voice Assistant equipped with real-time desktop vision and direct OS automation.
 
-IMPORTANT LANGUAGE DIRECTIVE:
-- Always respond in natural, polite, and fluent conversational Urdu / Hindi (using Roman Urdu/Hindi or native Urdu script, e.g. "جی سر، میں نے یوٹیوب اوپن کر کے The Hasnain Gaming سرچ کر دیا ہے۔" or "Jee Sir, maine Chrome me YouTube open kar diya hai.").
-- Never give long, robotic speeches. Keep responses crisp, fast, and helpful.
-- If the user talks to you in English, you can reply in English. If they talk in Urdu/Hindi, reply in Urdu/Hindi.
+CORE EXECUTION DIRECTIVE:
+1. Return responses in STRICT JSON schema ONLY.
+2. Formulate end-to-end multi-step actions to execute the user's intent.
+3. Keep spoken responses polite, concise, and futuristic.
 
-Capabilities:
-1. OPEN_APP: Launch desktop applications (payload: { "name": "notepad" }, or "calc", "chrome", "code", "cmd", "explorer", "taskmgr").
-2. OPEN_BROWSER: Open URLs or search YouTube/Google (payload: { "url": "https://www.youtube.com", "query": "The Hasnain Gaming" }).
-3. CREATE_FILE: Write project files directly to Desktop (payload: { "filename": "index.html", "content": "..." }).
-4. RUN_COMMAND: Execute shell commands or PowerShell scripts on the PC (payload: { "cmd": "dir" }).
-
-Respond ONLY in this JSON format:
+JSON Schema:
 {
-  "spokenResponse": "جی سر، میں نے یوٹیوب اوپن کر دیا ہے۔",
+  "spokenResponse": "Sir, I have searched YouTube for the video and created the requested Python script.",
   "actions": [
     {
-      "type": "OPEN_BROWSER",
+      "type": "OPEN_BROWSER_AND_PLAY",
       "payload": {
         "url": "https://www.youtube.com",
-        "query": "The Hasnain Gaming"
+        "query": "The Hasnain Gaming",
+        "autoplay": true
+      }
+    },
+    {
+      "type": "CREATE_AND_RUN_PROJECT",
+      "payload": {
+        "directoryName": "DataParser",
+        "filename": "parser.py",
+        "content": "import csv\\nprint('NOVA parser executed successfully')",
+        "executeImmediately": true
       }
     }
   ]
 }
-If no OS actions are needed, keep "actions": [].
+
+Available Action Types:
+- OPEN_BROWSER_AND_PLAY: { url, query, autoplay }
+- CREATE_AND_RUN_PROJECT: { directoryName, filename, content, executeImmediately }
+- OPEN_APP: { name } (e.g., notepad, calc, code, chrome)
+- RUN_COMMAND: { cmd }
 `;
 
-async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
-  const provider = config.provider || 'gemini';
-
-  // 1. Google Gemini Native Engine
-  if (provider === 'gemini') {
-    if (!config.geminiKey) {
-      throw new Error('Gemini API کی موجود نہیں ہے۔ برائے مہربانی سیٹنگز میں جا کر API کی درج کریں۔');
-    }
-
-    const genAI = new GoogleGenerativeAI(config.geminiKey);
-    const modelName = (config.geminiModel || 'gemini-2.0-flash').trim();
-
-    const parts = [];
-
-    if (audioBase64) {
-      parts.push({
-        inlineData: {
-          mimeType: 'audio/webm',
-          data: audioBase64
-        }
-      });
-      parts.push('User spoke to you in voice. Understand their intent (which may be in Urdu, Hindi, or English) and fulfill the request.');
-    }
-
-    if (imageBase64) {
-      parts.push({
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: imageBase64
-        }
-      });
-      parts.push('This is the current screen of the user PC. Use it as context.');
-    }
-
-    if (userPrompt) parts.push(userPrompt);
-
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        systemInstruction: SYSTEM_INSTRUCTION,
-        generationConfig: { responseMimeType: 'application/json' }
-      });
-      const result = await model.generateContent(parts);
-      return JSON.parse(result.response.text());
-    } catch (modelErr) {
-      // Auto-fallback if the specified model is not available
-      if (modelErr.message.includes('404') || modelErr.message.includes('not found')) {
-        const fallback = genAI.getGenerativeModel({
-          model: 'gemini-1.5-flash',
-          systemInstruction: SYSTEM_INSTRUCTION,
-          generationConfig: { responseMimeType: 'application/json' }
-        });
-        const result = await fallback.generateContent(parts);
-        return JSON.parse(result.response.text());
-      }
-      throw modelErr;
-    }
+/**
+ * OpenRouter Universal Engine Handler
+ */
+async function queryOpenRouter(userPrompt, imageBase64, config) {
+  if (!config.openrouterKey) {
+    throw new Error('OpenRouter API key is not configured in Settings.');
   }
 
-  // 2. Custom AI Gateway or OpenAI (Works with Groq, DeepSeek, Ollama, OpenRouter, xkiro, etc.)
-  const clientOptions = {};
+  const client = new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: config.openrouterKey,
+    defaultHeaders: {
+      'HTTP-Referer': 'https://nova-ai.desktop',
+      'X-Title': 'NOVA AI Desktop Assistant'
+    }
+  });
 
-  if (provider === 'custom') {
-    clientOptions.baseURL = config.customBaseURL || 'http://localhost:11434/v1';
-    clientOptions.apiKey = config.customKey || 'dummy-key';
-  } else {
-    clientOptions.apiKey = config.openaiKey;
-  }
-
-  if (!clientOptions.apiKey && provider === 'openai') {
-    throw new Error('OpenAI API کی موجود نہیں ہے۔');
-  }
-
-  const client = new OpenAI(clientOptions);
-  const selectedModel = provider === 'openai' 
-    ? (config.openaiModel || 'gpt-4o') 
-    : (config.customModel || 'llama-3.3-70b-versatile');
-
+  const selectedModel = config.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free';
   const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
-  const contentArray = [];
+  const content = [];
 
-  if (userPrompt) {
-    contentArray.push({ type: 'text', text: userPrompt });
-  } else if (audioBase64) {
-    contentArray.push({ type: 'text', text: 'Voice directive received. Execute system actions.' });
-  }
-
+  if (userPrompt) content.push({ type: 'text', text: userPrompt });
   if (imageBase64) {
-    contentArray.push({
+    content.push({
       type: 'image_url',
       image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
     });
   }
 
-  messages.push({ role: 'user', content: contentArray });
+  messages.push({ role: 'user', content });
 
   const completion = await client.chat.completions.create({
     model: selectedModel,
+    messages,
+    response_format: { type: 'json_object' }
+  });
+
+  return JSON.parse(completion.choices[0].message.content);
+}
+
+/**
+ * Google Gemini Engine with Instant OpenRouter Fallback
+ */
+async function queryGemini(userPrompt, audioBase64, imageBase64, config) {
+  if (!config.geminiKey) {
+    throw new Error('Gemini API key is missing.');
+  }
+
+  const genAI = new GoogleGenerativeAI(config.geminiKey);
+  const modelName = config.geminiModel || 'gemini-2.0-flash';
+
+  const parts = [];
+  if (audioBase64) {
+    parts.push({
+      inlineData: {
+        mimeType: 'audio/webm',
+        data: audioBase64
+      }
+    });
+  }
+  if (imageBase64) {
+    parts.push({
+      inlineData: {
+        mimeType: 'image/jpeg',
+        data: imageBase64
+      }
+    });
+  }
+  if (userPrompt) parts.push(userPrompt);
+
+  try {
+    const model = genAI.getGenerativeModel({
+      model: modelName,
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: { responseMimeType: 'application/json' }
+    });
+
+    const result = await model.generateContent(parts);
+    return JSON.parse(result.response.text());
+  } catch (err) {
+    const isRateLimit =
+      err.message.includes('429') ||
+      err.message.includes('quota') ||
+      err.message.includes('ResourceExhausted') ||
+      err.message.includes('503');
+
+    // Automatic Failover to OpenRouter if enabled
+    if (isRateLimit && config.autoFailover !== false && config.openrouterKey) {
+      return await queryOpenRouter(
+        userPrompt || 'Execute current voice/vision instruction',
+        imageBase64,
+        config
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Universal Inference Gateway Router
+ */
+async function runAIInference(userPrompt, audioBase64, imageBase64, config) {
+  const provider = config.provider || 'openrouter';
+
+  if (provider === 'openrouter') {
+    return await queryOpenRouter(userPrompt, imageBase64, config);
+  }
+
+  if (provider === 'gemini') {
+    return await queryGemini(userPrompt, audioBase64, imageBase64, config);
+  }
+
+  // Custom / Local Endpoint (e.g. Ollama, Groq)
+  const client = new OpenAI({
+    baseURL: config.customBaseURL || 'http://localhost:11434/v1',
+    apiKey: config.customKey || 'dummy'
+  });
+
+  const messages = [
+    { role: 'system', content: SYSTEM_INSTRUCTION },
+    { role: 'user', content: userPrompt || 'Process system context' }
+  ];
+
+  const completion = await client.chat.completions.create({
+    model: config.customModel || 'llama3.3',
     messages,
     response_format: { type: 'json_object' }
   });
