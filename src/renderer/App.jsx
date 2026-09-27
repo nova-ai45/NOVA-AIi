@@ -6,8 +6,6 @@ import {
   Settings,
   Send,
   Plus,
-  Moon,
-  Volume2,
   Cpu,
   Activity,
   Mic,
@@ -18,23 +16,32 @@ import {
 
 export default function App() {
   const [logs, setLogs] = useState([
-    { timestamp: 'SYSTEM', message: "nova.core(engine=\"acoustic_rms_vad\", status=\"ready\")" },
-    { timestamp: 'ACTIVE', message: "Natural Conversation Mode Online (1.6s Pause Threshold) |" }
+    { timestamp: 'SYSTEM', message: "nova.core(status=\"ready\", memory=\"sanitized\")" },
+    { timestamp: 'ACTIVE', message: "Acoustic VAD Engine Online |" }
   ]);
   const [sphereState, setSphereState] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking' | 'executing'
   const [inputText, setInputText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState({});
-  const [audioLevel, setAudioLevel] = useState(0); // ڈیفالٹ پر 0 رہے گا
+  const [audioLevel, setAudioLevel] = useState(0);
   const [liveMicPercent, setLiveMicPercent] = useState(0);
   const [isSpeakingNow, setIsSpeakingNow] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
   const [activeTab, setActiveTab] = useState('assistant');
 
+  // Persistent sanitized conversation memory
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('nova_chat_history');
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      // Clean up any empty items or trailing model entries
+      const cleaned = parsed.filter(item => item && item.text && item.text.trim() !== '');
+      while (cleaned.length > 0 && cleaned[cleaned.length - 1].role === 'model') {
+        cleaned.pop();
+      }
+      return cleaned;
     } catch (_) {
       return [];
     }
@@ -42,7 +49,7 @@ export default function App() {
 
   const [cpuUsage, setCpuUsage] = useState(38);
 
-  // Industry-Standard RMS VAD Refs
+  // Audio Context & Hardware Stream Refs
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -82,7 +89,6 @@ export default function App() {
       setSphereState(st);
     });
 
-    // Start Real Acoustic RMS VAD
     startJarvisStyleVAD();
 
     return () => {
@@ -95,7 +101,6 @@ export default function App() {
     };
   }, []);
 
-  // ایکوسٹک RMS انرجی VAD (پنکھے کا شور 0% رہے گا، صرف اصل انسانی گلے کی آواز پر چلے گا)
   const startJarvisStyleVAD = async () => {
     try {
       if (mediaStreamRef.current) return;
@@ -131,9 +136,8 @@ export default function App() {
       const micDeviceName = audioTrack ? audioTrack.label : 'Microphone';
       setLogs((prev) => [...prev, { timestamp: 'MIC', message: `Hardware Connected: "${micDeviceName}" [LIVE]` }]);
 
-      // کونسسٹنٹ پیرامیٹرز
-      const SILENCE_TIMEOUT_MS = 1600; // مکمل بات کر کے 1.6 سیکنڈ خاموش ہونے پر ہی تھنکنگ شروع ہوگی!
-      const MIN_SPEECH_DURATION_MS = 700; // بولنے کا کم از کم دورانیہ (تاکہ کھانسی یا ماؤس کلک پر فیک ٹرگر نہ ہو)
+      const SILENCE_TIMEOUT_MS = 1500;
+      const MIN_SPEECH_DURATION_MS = 600;
 
       const vadLoop = () => {
         if (isProcessingRef.current || sphereState === 'speaking' || micMuted) {
@@ -148,7 +152,6 @@ export default function App() {
           audioCtx.resume();
         }
 
-        // Time-Domain RMS Energy کی پیمائش (صوتی انرجی کا سب سے مستند طریقہ)
         analyser.getByteTimeDomainData(timeData);
         let sumSquares = 0;
         for (let i = 0; i < bufferLength; i++) {
@@ -157,7 +160,6 @@ export default function App() {
         }
         const rms = Math.sqrt(sumSquares / bufferLength);
 
-        // بیک گراؤنڈ شور اور پنکھے کو کاٹ کر صاف آواز نکالیں
         const cleanRms = Math.max(0, rms - 0.016);
         const volumePercent = Math.min(100, Math.round((cleanRms / 0.18) * 100));
 
@@ -166,16 +168,14 @@ export default function App() {
         if (volumePercent > 0) {
           setAudioLevel(Math.min(1.0, 0.15 + (volumePercent / 100) * 0.85));
         } else {
-          setAudioLevel(0); // خاموشی میں لہریں 100% ساکت اور فلیٹ رہیں گی
+          setAudioLevel(0);
         }
 
-        // بولنے کی پہچان کا تھریشولڈ
         const SPEECH_START_THRESHOLD = 0.022;
 
         if (cleanRms > SPEECH_START_THRESHOLD) {
           consecutiveVoiceFramesRef.current++;
 
-          // جب مسلسل 3 فریمز (50ms) آواز آئے تب ہی ریکارڈنگ شروع کریں (ماؤس کلک پر نہیں)
           if (consecutiveVoiceFramesRef.current >= 3) {
             setIsSpeakingNow(true);
 
@@ -186,7 +186,6 @@ export default function App() {
               startRecordingAudioChunks(stream);
             }
 
-            // بولتے ہوئے اگر سائلنس ٹائمر چل رہا تھا تو اسے فوری منسوخ کر دیں
             if (silenceTimerRef.current) {
               clearTimeout(silenceTimerRef.current);
               silenceTimerRef.current = null;
@@ -196,19 +195,15 @@ export default function App() {
           consecutiveVoiceFramesRef.current = 0;
           setIsSpeakingNow(false);
 
-          // اگر صارف بول چکا ہے اور اب خاموش ہو گیا ہے:
           if (isRecordingActiveRef.current && !silenceTimerRef.current) {
             silenceTimerRef.current = setTimeout(() => {
-              // 1.6 سیکنڈ کا قدرتی خاموشی کا وقفہ مکمل!
               const totalSpeechTime = Date.now() - speechStartTimeRef.current;
               silenceTimerRef.current = null;
               isRecordingActiveRef.current = false;
 
-              // اگر واقعی 700ms سے زیادہ بات کی گئی ہے تو AI کو بھیجیں
               if (totalSpeechTime >= MIN_SPEECH_DURATION_MS) {
                 finishAndSubmitAudio();
               } else {
-                // اگر صرف ہلکا سا کھانسی کا جھٹکا تھا تو کینسل کر کے خاموش ہو جائیں
                 if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                   mediaRecorderRef.current.stop();
                 }
@@ -305,7 +300,6 @@ export default function App() {
     }
   };
 
-  // نیچرل فیمیل وائس
   const speakWithFemaleVoice = (text) => {
     cancelNativeSpeech();
 
@@ -366,7 +360,7 @@ export default function App() {
     cancelNativeSpeech();
 
     setInputText('');
-    setSphereState('thinking'); // خاموشی کے بعد اب تھنکنگ میں جائے گی
+    setSphereState('thinking');
 
     if (prompt) {
       setLogs((prev) => [...prev, { timestamp: 'USER', message: prompt }]);
@@ -374,24 +368,28 @@ export default function App() {
       setLogs((prev) => [...prev, { timestamp: 'VOICE', message: "Voice processed -> Analyzing intent..." }]);
     }
 
-    const historySnapshot = [...chatHistory];
+    // Ensure snapshot does not end with an orphaned user or model turn
+    const cleanHistorySnapshot = chatHistory.filter(item => item && item.text && item.text.trim() !== '');
 
     const result = await window.novaAPI.processCommand({
       text: prompt,
       audioBase64: audioPayload,
-      conversationHistory: historySnapshot,
+      conversationHistory: cleanHistorySnapshot,
       includeVision: true
     });
 
     if (result && result.success) {
-      setChatHistory((prev) => [
-        ...prev,
-        { role: 'user', text: prompt || '[Voice Directive]' },
-        { role: 'model', text: result.spokenResponse || 'Action executed.' }
-      ]);
+      const spokenText = (result.spokenResponse || '').trim();
 
-      if (result.spokenResponse) {
-        speakWithFemaleVoice(result.spokenResponse);
+      // Only append complete, valid user-model pairs to memory
+      if (spokenText) {
+        setChatHistory((prev) => {
+          const userTurn = { role: 'user', text: prompt || '[Voice Directive]' };
+          const modelTurn = { role: 'model', text: spokenText };
+          return [...prev, userTurn, modelTurn].slice(-20);
+        });
+
+        speakWithFemaleVoice(spokenText);
       } else {
         isProcessingRef.current = false;
         setSphereState('idle');
@@ -473,7 +471,7 @@ export default function App() {
 
       {/* 2. MAIN GRID */}
       <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
-        {/* NAVIGATION & CLEAN LIVE VU METER */}
+        {/* NAVIGATION & VU METER */}
         <div className="col-span-12 md:col-span-2 flex flex-col p-4 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_20px_rgba(255,119,0,0.1)] backdrop-blur-xl justify-between">
           <div>
             <div className="text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold mb-4 flex items-center space-x-1.5">
@@ -504,7 +502,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* مائیک کا والیم بار: خاموشی میں مکمل 0% رہے گا، بولنے پر ہی اوپر جائے گا */}
           <div className="p-3.5 rounded-xl bg-[#121522] border border-slate-800 space-y-2">
             <div className="flex justify-between items-center text-[10px] font-mono">
               <span className="text-slate-400">VOICE INPUT</span>
@@ -530,7 +527,7 @@ export default function App() {
           <div className="w-full flex justify-between items-center text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold z-10">
             <span className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#ff8800]" />
-              <span>VOICE INTERFACE (JARVIS ACOUSTIC VAD)</span>
+              <span>VOICE INTERFACE (ACOUSTIC RMS VAD)</span>
             </span>
             <span className="opacity-50">• • •</span>
           </div>
@@ -539,7 +536,6 @@ export default function App() {
             <NovaSphere state={sphereState} audioLevel={audioLevel} />
           </div>
 
-          {/* اسٹیٹس لیبل */}
           <div className="z-10 mb-2 flex items-center space-x-2 px-5 py-1.5 rounded-full bg-[#121522] border border-[#ff7700]/40 text-[#ffaa00] font-mono text-xs shadow-[0_0_15px_rgba(255,119,0,0.2)]">
             <span className={`w-1.5 h-1.5 rounded-full ${sphereState === 'thinking' ? 'bg-cyan-400 animate-ping' : isSpeakingNow ? 'bg-emerald-400 animate-ping' : 'bg-[#ff8800]'}`} />
             <span className="tracking-widest uppercase">
