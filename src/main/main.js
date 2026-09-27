@@ -1,12 +1,14 @@
-const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// 1. Hardware acceleration safety
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
 
+// 2. Emergency Crash Logger
 function logEmergencyCrash(type, error) {
   const errString = error && error.stack ? error.stack : String(error);
   const logMessage = `[${new Date().toISOString()}] ${type}:\n${errString}\n\n`;
@@ -25,7 +27,7 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// Single Instance Lock
+// 3. Single Instance Enforcement
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -145,15 +147,17 @@ function resolveIndexPath() {
 function createWindow() {
   const preloadResolved = resolvePreloadPath();
 
+  // Native Windows frame enabled; custom borderless frame removed
   mainWindow = new BrowserWindow({
+    title: 'NOVA AI',
     width: 1340,
     height: 880,
     minWidth: 1080,
     minHeight: 740,
     backgroundColor: '#030712',
     show: true,
-    frame: false, // Frameless Glassmorphic Layout
-    titleBarStyle: 'hidden',
+    frame: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: preloadResolved,
       contextIsolation: true,
@@ -170,7 +174,6 @@ function createWindow() {
     loadProductionBuild(mainWindow);
   }
 
-  // Prevent app from quitting when window is closed (minimize to tray)
   mainWindow.on('close', (e) => {
     if (!app.isQuitting) {
       e.preventDefault();
@@ -188,14 +191,13 @@ function loadProductionBuild(targetWindow) {
   } else {
     const fallbackHTML = `
       <!DOCTYPE html><html><body style="background:#030712;color:#f87171;font-family:sans-serif;padding:40px;">
-      <h2>NOVA AI - Production Assets Not Found</h2>
-      <p>Please ensure <code>npm run build:renderer</code> ran before packaging.</p></body></html>
+      <h2>NOVA AI - Assets Not Found</h2>
+      <p>Ensure <code>npm run build:renderer</code> ran prior to packaging.</p></body></html>
     `;
     targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHTML)}`);
   }
 }
 
-// System Tray Service for Background Voice Listening
 function setupSystemTray() {
   try {
     const iconPath = path.join(__dirname, '../../public/favicon.ico');
@@ -206,7 +208,7 @@ function setupSystemTray() {
       { type: 'separator' },
       { label: 'Quit NOVA', click: () => { app.isQuitting = true; app.quit(); } }
     ]);
-    tray.setToolTip('NOVA AI - Neural Assistant (Listening in Background)');
+    tray.setToolTip('NOVA AI - Voice Assistant');
     tray.setContextMenu(contextMenu);
     tray.on('double-click', () => {
       mainWindow.show();
@@ -221,27 +223,6 @@ app.whenReady().then(() => {
 
   createWindow();
   setupSystemTray();
-
-  // Register Global Hotkey (Ctrl + Space) to summon from background
-  globalShortcut.register('CommandOrControl+Space', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized() || !mainWindow.isVisible()) {
-        mainWindow.show();
-      }
-      mainWindow.focus();
-      broadcastState('listening');
-    }
-  });
-
-  // Native Frameless Window IPC Controls
-  ipcMain.on('nova:window:control', (_, action) => {
-    if (!mainWindow) return;
-    if (action === 'minimize') mainWindow.hide();
-    else if (action === 'maximize') mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
-    else if (action === 'close') {
-      mainWindow.hide();
-    }
-  });
 
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
@@ -269,17 +250,27 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir }) => {
+    if (!automation || !automation.createDesktopFile) return { success: false };
+    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
+  });
+
+  ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery }) => {
+    if (!automation || !automation.openBrowserAndPlay) return { success: false };
+    return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
+  });
+
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, includeVision }) => {
     const config = readSettings();
     try {
-      broadcastState('processing');
+      broadcastState('thinking');
 
       let visionData = null;
       if (includeVision && vision && vision.getLatestScreenContext) {
         visionData = await vision.getLatestScreenContext();
       }
 
-      if (text) broadcastLog('command', `Directive: "${text}"`);
+      if (text) broadcastLog('command', `User Directive: "${text}"`);
 
       if (!aiEngine || !aiEngine.runAIInference) {
         throw new Error('AI Engine subsystem offline.');
@@ -329,6 +320,17 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized() || !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+  }
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
