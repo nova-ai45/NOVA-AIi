@@ -13,7 +13,8 @@ import {
   Activity,
   Code2,
   CheckCircle2,
-  Mic
+  Mic,
+  MicOff
 } from 'lucide-react';
 
 export default function App() {
@@ -25,26 +26,23 @@ export default function App() {
   const [settings, setSettings] = useState({});
   const [audioLevel, setAudioLevel] = useState(0.18);
 
-  // Dynamic status banner
   const [greetingVisible, setGreetingVisible] = useState(true);
   const [statusMessage, setStatusMessage] = useState('Listening...');
 
-  // Live code execution HUD
   const [liveStreamActive, setLiveStreamActive] = useState(false);
   const [streamingFileName, setStreamingFileName] = useState('');
   const [streamedCode, setStreamedCode] = useState('');
 
-  // Clock & system telemetry
   const [currentTime, setCurrentTime] = useState('');
   const [currentDate, setCurrentDate] = useState('');
   const [sysMetrics, setSysMetrics] = useState({ cpu: 12, ram: 44, disk: 31 });
 
-  // Refs for silence detection and audio queues
+  // Real-time voice engine references
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const accumulatedSpeechRef = useRef('');
   const isSpeechRunningRef = useRef(false);
-  const isExecutingRef = useRef(false);
+  const isProcessingRef = useRef(false);
   const currentAudioRef = useRef(null);
   const audioContextRef = useRef(null);
   const animFrameRef = useRef(null);
@@ -71,7 +69,6 @@ export default function App() {
       });
     }, 2500);
 
-    // Load persistent config
     window.novaAPI.getSettings().then((cfg) => {
       const localCfg = localStorage.getItem('nova_persistent_config');
       const merged = { ...(localCfg ? JSON.parse(localCfg) : {}), ...cfg };
@@ -93,30 +90,42 @@ export default function App() {
     const unsubState = window.novaAPI.onStateChange((st) => {
       setSphereState(st);
       if (st === 'thinking') {
-        setStatusMessage('Thinking...');
+        setStatusMessage('JARVIS Thinking...');
       } else if (st === 'executing') {
         setStatusMessage('Executing automation...');
       } else if (st === 'speaking') {
         setStatusMessage('NOVA is speaking...');
       } else if (st === 'listening') {
-        setStatusMessage('Listening to your voice...');
+        setStatusMessage('Listening...');
       } else if (st === 'idle') {
         setStatusMessage('Listening...');
       }
     });
 
-    const unsubCodeStream = window.novaAPI.onCodeStream ? window.novaAPI.onCodeStream((data) => {
-      setLiveStreamActive(true);
-      setStreamingFileName(data.filename || 'script.js');
-      setStreamedCode((prev) => prev + (data.chunk || ''));
-      if (data.done) {
-        setTimeout(() => setLiveStreamActive(false), 4000);
-      }
-    }) : () => {};
+    // Real-time AI stream listeners
+    if (window.novaAPI.onAiStreamChunk) {
+      window.novaAPI.onAiStreamChunk((chunk) => {
+        setStatusMessage(`Streaming: ${chunk.slice(0, 35)}...`);
+      });
+    }
+
+    if (window.novaAPI.onEarlyAudioChunk) {
+      window.novaAPI.onEarlyAudioChunk((audioBase64) => {
+        playEarlyAudioStream(audioBase64);
+      });
+    }
+
+    // Absolute shutdown listener: stop all media tracks when main process triggers shutdown
+    if (window.novaAPI.onSystemShutdown) {
+      window.novaAPI.onSystemShutdown(() => {
+        destroySpeechRecognition();
+        cancelActiveSpeech();
+      });
+    }
 
     const greetingTimer = setTimeout(() => {
       setGreetingVisible(false);
-    }, 5000);
+    }, 4500);
 
     initBackgroundCanvasShader();
     initSpeechRecognitionEngine();
@@ -127,14 +136,12 @@ export default function App() {
       clearTimeout(greetingTimer);
       unsubLog();
       unsubState();
-      unsubCodeStream();
       destroySpeechRecognition();
       cancelActiveSpeech();
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
 
-  // Background Canvas Ambient Animation
   const initBackgroundCanvasShader = () => {
     const canvas = canvasBgRef.current;
     if (!canvas) return;
@@ -206,11 +213,11 @@ export default function App() {
     };
   };
 
-  // Continuous Speech Recognition with 1.5s Silence Timeout
+  // Ultra-responsive Voice Engine: interim results + strict 900ms silence timeout
   const initSpeechRecognitionEngine = () => {
     const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechConstructor) {
-      console.warn('SpeechRecognition API unsupported in this environment.');
+      console.warn('SpeechRecognition API unsupported.');
       return;
     }
 
@@ -222,58 +229,58 @@ export default function App() {
 
       recognition.onstart = () => {
         isSpeechRunningRef.current = true;
-        if (!isExecutingRef.current) {
+        if (!isProcessingRef.current) {
           setSphereState('listening');
         }
       };
 
       recognition.onresult = (event) => {
-        if (isExecutingRef.current) return;
+        if (isProcessingRef.current) return;
 
-        let interimText = '';
+        let liveText = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const item = event.results[i];
           if (item[0] && item[0].transcript) {
-            interimText += item[0].transcript;
+            liveText += item[0].transcript;
           }
         }
 
-        const trimmed = interimText.trim();
+        const trimmed = liveText.trim();
         if (trimmed.length > 0) {
           accumulatedSpeechRef.current = trimmed;
           setSphereState('listening');
           setStatusMessage(`"${trimmed}"`);
 
-          // Reset silence timer on every new speech chunk detected
+          // Clear any active silence countdown
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
           }
 
-          // Auto-submit after 1.5 seconds of silence
+          // Strict 900ms Silence Timeout: user stopped speaking -> immediately dispatch to AI
           silenceTimerRef.current = setTimeout(() => {
             const finalSpeech = accumulatedSpeechRef.current.trim();
-            if (finalSpeech.length > 0 && !isExecutingRef.current) {
+            if (finalSpeech.length > 0 && !isProcessingRef.current) {
               accumulatedSpeechRef.current = '';
               stopSpeechRecognition();
               handleExecute(finalSpeech);
             }
-          }, 1500);
+          }, 900);
         }
       };
 
       recognition.onerror = (e) => {
         if (e.error !== 'no-speech') {
-          console.warn('Speech engine event:', e.error);
+          console.warn('Speech engine state:', e.error);
         }
       };
 
       recognition.onend = () => {
         isSpeechRunningRef.current = false;
-        // Automatically restart speech loop if app is idle and not executing
-        if (!isExecutingRef.current) {
+        // Immediate clean restart if not currently processing AI output
+        if (!isProcessingRef.current) {
           setTimeout(() => {
             startSpeechRecognition();
-          }, 300);
+          }, 200);
         }
       };
 
@@ -285,7 +292,7 @@ export default function App() {
   };
 
   const startSpeechRecognition = () => {
-    if (recognitionRef.current && !isSpeechRunningRef.current && !isExecutingRef.current) {
+    if (recognitionRef.current && !isSpeechRunningRef.current && !isProcessingRef.current) {
       try {
         recognitionRef.current.start();
       } catch (_) {}
@@ -323,6 +330,27 @@ export default function App() {
     }
   };
 
+  const playEarlyAudioStream = (base64Audio) => {
+    cancelActiveSpeech();
+    try {
+      setSphereState('speaking');
+      setStatusMessage('NOVA is speaking...');
+
+      const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+      currentAudioRef.current = audio;
+
+      audio.onended = () => {
+        currentAudioRef.current = null;
+        isProcessingRef.current = false;
+        setSphereState('idle');
+        setStatusMessage('Listening...');
+        startSpeechRecognition();
+      };
+
+      audio.play();
+    } catch (_) {}
+  };
+
   const playSynthesizedVoice = (base64Audio) => {
     cancelActiveSpeech();
     try {
@@ -356,10 +384,9 @@ export default function App() {
 
       audio.onplay = () => updatePulse();
 
-      // Upon speech end, automatically restart speech recognition for next prompt
       audio.onended = () => {
         currentAudioRef.current = null;
-        isExecutingRef.current = false;
+        isProcessingRef.current = false;
         setSphereState('idle');
         setStatusMessage('Listening...');
         setAudioLevel(0.18);
@@ -368,7 +395,7 @@ export default function App() {
 
       audio.onerror = () => {
         currentAudioRef.current = null;
-        isExecutingRef.current = false;
+        isProcessingRef.current = false;
         setSphereState('idle');
         setStatusMessage('Listening...');
         startSpeechRecognition();
@@ -376,25 +403,24 @@ export default function App() {
 
       audio.play();
     } catch (_) {
-      isExecutingRef.current = false;
+      isProcessingRef.current = false;
       setSphereState('idle');
       setStatusMessage('Listening...');
       startSpeechRecognition();
     }
   };
 
-  // Unified execution pipeline for both voice (silence auto-submit) and text input
   const handleExecute = async (overridePrompt = null) => {
     const prompt = overridePrompt || inputText;
     if (!prompt.trim()) return;
 
-    isExecutingRef.current = true;
+    isProcessingRef.current = true;
     stopSpeechRecognition();
     cancelActiveSpeech();
 
     setInputText('');
     setSphereState('thinking');
-    setStatusMessage('Thinking...');
+    setStatusMessage('JARVIS Thinking...');
 
     const result = await window.novaAPI.processCommand({
       text: prompt,
@@ -405,7 +431,7 @@ export default function App() {
     if (result && result.audioBase64) {
       playSynthesizedVoice(result.audioBase64);
     } else {
-      isExecutingRef.current = false;
+      isProcessingRef.current = false;
       setSphereState('idle');
       setStatusMessage('Listening...');
       startSpeechRecognition();
@@ -414,7 +440,6 @@ export default function App() {
 
   return (
     <div className="relative flex h-screen w-screen bg-[#030712] text-slate-100 font-sans overflow-hidden select-none">
-      {/* Background Canvas Shader */}
       <canvas ref={canvasBgRef} className="absolute inset-0 pointer-events-none z-0" />
 
       {/* 1. Left Sidebar Navigation */}
@@ -451,13 +476,12 @@ export default function App() {
             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981] animate-ping" />
             <span className="text-[9px] font-mono text-emerald-300 font-semibold">LIVE</span>
           </div>
-          <span className="text-[8px] text-slate-500 font-mono">1.5s Silence VAD</span>
+          <span className="text-[8px] text-slate-500 font-mono">900ms VAD</span>
         </div>
       </aside>
 
       {/* 2. Main Content Area */}
       <div className="flex-1 flex flex-col relative overflow-hidden z-10">
-        {/* Clean Header Bar */}
         <header className="flex items-center justify-between px-8 py-3.5 border-b border-slate-800/40 backdrop-blur-md">
           <div className="flex items-center space-x-4">
             <span className="text-xs font-mono font-bold tracking-[0.35em] text-slate-300 uppercase">N O V A</span>
@@ -469,10 +493,8 @@ export default function App() {
           </div>
         </header>
 
-        {/* Central Arena */}
         <div className="flex-1 flex relative overflow-hidden">
           <div className="flex-1 flex flex-col items-center justify-between p-6 relative">
-            {/* Dynamic Greeting Banner with Auto Fade-out */}
             {greetingVisible ? (
               <div className="z-20 mt-1 flex items-center space-x-3.5 px-6 py-2.5 rounded-full bg-[#0a0f26]/90 border border-purple-500/40 shadow-[0_0_30px_rgba(168,85,247,0.3)] backdrop-blur-2xl transition-all duration-700">
                 <div className="w-8 h-8 rounded-full bg-purple-600/30 border border-purple-400/50 flex items-center justify-center">
@@ -482,7 +504,7 @@ export default function App() {
                   <div className="text-sm font-bold tracking-wide">
                     Hello! I'm <span className="text-purple-400 font-extrabold">NOVA</span>
                   </div>
-                  <div className="text-xs text-slate-400">Speak naturally. Auto-submits after 1.5 seconds of silence.</div>
+                  <div className="text-xs text-slate-400">Real-time speech active. Auto-submits on 900ms pause.</div>
                 </div>
               </div>
             ) : (
@@ -492,12 +514,10 @@ export default function App() {
               </div>
             )}
 
-            {/* Central 3D Interactive Sphere Visualizer */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <NovaSphere state={sphereState} audioLevel={audioLevel} />
             </div>
 
-            {/* Live Visual Code Streaming Terminal Overlay */}
             {liveStreamActive && (
               <div className="absolute inset-x-12 top-20 z-30 max-h-72 bg-[#060a1cf0] border border-cyan-500/50 rounded-2xl p-4 shadow-[0_0_40px_rgba(0,240,255,0.25)] backdrop-blur-2xl flex flex-col font-mono text-xs overflow-hidden">
                 <div className="flex items-center justify-between pb-2 border-b border-cyan-500/30 mb-2">
@@ -517,7 +537,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Bottom Command Bar */}
             <div className="w-full max-w-3xl z-20 mb-2">
               <form
                 onSubmit={(e) => {
@@ -528,7 +547,7 @@ export default function App() {
               >
                 <button
                   type="button"
-                  onClick={() => handleExecute('Create index.html with a landing page on my desktop and open it')}
+                  onClick={() => handleExecute('Create index.html with a futuristic landing page on desktop and open it')}
                   className="w-10 h-10 rounded-full bg-slate-900 border border-slate-700/80 flex items-center justify-center text-slate-300 hover:text-cyan-400 hover:border-cyan-400 transition"
                   title="Generate Visual Code Project"
                 >
@@ -539,7 +558,7 @@ export default function App() {
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Speak anytime, or type directive (e.g. 'Open YouTube to The Hasnain Gaming')..."
+                  placeholder="Speak naturally, or type directive (e.g. 'Search YouTube for The Hasnain Gaming')..."
                   className="flex-1 bg-transparent px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none font-sans"
                 />
 
@@ -558,9 +577,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right Utility Column */}
           <aside className="w-80 p-6 flex flex-col space-y-6 border-l border-slate-800/40 z-20 bg-[#040816]/60 backdrop-blur-xl">
-            {/* Clock Card */}
             <div className="p-5 rounded-3xl bg-gradient-to-br from-[#0c132c]/90 to-[#070b1c]/90 border border-purple-500/30 shadow-[0_0_30px_rgba(147,51,234,0.15)] flex items-center justify-between">
               <div className="flex flex-col">
                 <span className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-purple-400 to-pink-300 bg-clip-text text-transparent font-mono">
@@ -573,7 +590,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* System Status */}
             <div className="p-5 rounded-3xl bg-gradient-to-br from-[#0a0f26]/90 to-[#050818]/90 border border-cyan-500/30 shadow-[0_0_30px_rgba(0,240,255,0.1)] flex flex-col space-y-4">
               <div className="flex items-center space-x-2 text-cyan-400 font-mono text-xs uppercase tracking-wider font-bold">
                 <Activity className="w-4 h-4" />
@@ -632,14 +648,13 @@ export default function App() {
             <div className="flex-1 flex items-end justify-end">
               <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-500">
                 <span className="w-6 h-[1px] bg-slate-800" />
-                <span>NOVA v2.6 &bull; Continuous VAD</span>
+                <span>NOVA v3.0 &bull; Fast-Stream JARVIS</span>
               </div>
             </div>
           </aside>
         </div>
       </div>
 
-      {/* Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
         isFirstRun={isFirstRun}
