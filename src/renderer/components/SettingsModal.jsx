@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Sliders, Mic, AlertCircle, CheckCircle, Trash2, Keyboard } from 'lucide-react';
+import { X, Save, Sliders, AlertCircle, CheckCircle, Trash2 } from 'lucide-react';
 
 export default function SettingsModal({
   isOpen,
@@ -12,7 +12,6 @@ export default function SettingsModal({
   const [formData, setFormData] = useState(currentSettings);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [memoryCleared, setMemoryCleared] = useState(false);
-  const [recordingHotkey, setRecordingHotkey] = useState(false);
 
   useEffect(() => {
     setFormData(currentSettings);
@@ -39,35 +38,6 @@ export default function SettingsModal({
     setTimeout(() => setMemoryCleared(false), 2000);
   };
 
-  // Interactive OS Global Hotkey Recorder
-  const handleHotkeyKeyDown = (e) => {
-    if (!recordingHotkey) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (['Alt', 'Control', 'Shift', 'Meta'].includes(e.key)) return;
-
-    const parts = [];
-    if (e.ctrlKey) parts.push('Control');
-    if (e.altKey) parts.push('Alt');
-    if (e.shiftKey) parts.push('Shift');
-    if (e.metaKey) parts.push('Meta');
-
-    let keyName = e.code.replace(/^(Key|Digit)/, '');
-    if (keyName === 'Space') keyName = 'Space';
-
-    parts.push(keyName);
-    const hotkeyCombination = parts.join('+');
-
-    handleChange('globalHotkey', hotkeyCombination);
-    setRecordingHotkey(false);
-
-    // Dynamic registrar update in main process
-    if (window.novaAPI.updateHotkey) {
-      window.novaAPI.updateHotkey(hotkeyCombination);
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4">
       <div className="w-full max-w-2xl bg-[#060a1a] border border-purple-500/50 rounded-3xl shadow-[0_0_70px_rgba(147,51,234,0.35)] overflow-hidden flex flex-col">
@@ -76,7 +46,7 @@ export default function SettingsModal({
           <div className="flex items-center space-x-2.5 text-purple-400">
             <Sliders className="w-5 h-5" />
             <h2 className="font-mono font-bold text-sm tracking-widest uppercase">
-              {isFirstRun ? 'NOVA AI // INITIAL COGNITIVE SETUP' : 'SYSTEM CONFIGURATION & PERSISTENT MEMORY'}
+              {isFirstRun ? 'NOVA AI // INITIAL SETUP' : 'NOVA AI // SYSTEM CONFIGURATION'}
             </h2>
           </div>
           {!isFirstRun && (
@@ -89,7 +59,7 @@ export default function SettingsModal({
         {isFirstRun && (
           <div className="px-6 py-3 bg-purple-950/40 border-b border-purple-500/30 flex items-center space-x-3 text-purple-300 text-xs font-mono">
             <AlertCircle className="w-4 h-4 text-purple-400 shrink-0" />
-            <span>Welcome Sir! Enter your API key below. Settings and conversation context persist across app restarts.</span>
+            <span>Welcome Sir! Enter your Gemini API key below. Settings persist across all reboots.</span>
           </div>
         )}
 
@@ -247,53 +217,12 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* Global Hotkey (Default: Alt+Space) */}
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2 text-purple-400">
-                <Keyboard className="w-4 h-4" />
-                <label className="text-xs font-mono uppercase text-slate-300 font-bold">
-                  Global Push-to-Talk Hotkey (Default: Alt+Space)
-                </label>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">Immediate OS Hook</span>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <input
-                type="text"
-                readOnly
-                value={recordingHotkey ? 'Press key combination...' : formData.globalHotkey || 'Alt+Space'}
-                onKeyDown={handleHotkeyKeyDown}
-                className={`flex-1 px-3.5 py-2 rounded-xl text-sm font-mono focus:outline-none border ${
-                  recordingHotkey
-                    ? 'bg-purple-950/60 border-purple-400 text-purple-200 animate-pulse'
-                    : 'bg-slate-900 border-slate-800 text-cyan-300'
-                }`}
-              />
-              <button
-                type="button"
-                onClick={() => setRecordingHotkey(!recordingHotkey)}
-                className={`px-4 py-2 rounded-xl text-xs font-mono uppercase font-bold transition ${
-                  recordingHotkey
-                    ? 'bg-rose-500 hover:bg-rose-600 text-white'
-                    : 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_15px_rgba(147,51,234,0.4)]'
-                }`}
-              >
-                {recordingHotkey ? 'Cancel' : 'Record Hotkey'}
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-500 font-mono">
-              Press "Record Hotkey" and enter a combination (e.g., Alt+Space, Shift+Space, Control+Shift+Z). Updates instantly without restarting.
-            </p>
-          </div>
-
           {/* Memory Management */}
           <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
             <div className="flex flex-col space-y-0.5">
-              <span className="text-xs font-mono font-bold text-slate-300 uppercase">Conversational Memory Context</span>
+              <span className="text-xs font-mono font-bold text-slate-300 uppercase">Conversational Memory</span>
               <span className="text-[11px] text-slate-500 font-mono">
-                NOVA retains the last 20 conversation turns. Reset to start a clean session.
+                NOVA remembers the last 20 conversation turns. Reset to start fresh.
               </span>
             </div>
             <button
@@ -323,7 +252,7 @@ export default function SettingsModal({
             className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(168,85,247,0.4)]"
           >
             {savedSuccess ? <CheckCircle className="w-4 h-4 text-emerald-300" /> : <Save className="w-4 h-4" />}
-            <span>{savedSuccess ? 'Saved Permanently!' : 'Save & Persist Changes'}</span>
+            <span>{savedSuccess ? 'Saved Permanently!' : 'Save Changes'}</span>
           </button>
         </div>
       </div>
