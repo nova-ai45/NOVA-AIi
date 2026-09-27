@@ -40,17 +40,17 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 
 let mainWindow = null;
 
+// ڈیفالٹ سیٹنگز میں اردو زبان کو اولین ترجیح دی گئی ہے
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
   geminiModel: 'gemini-2.5-flash',
   openrouterKey: '',
   openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
-  openaiKey: '',
-  openaiModel: 'gpt-4o',
   customBaseURL: 'https://api.groq.com/openai/v1',
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
+  voice: 'ur-PK', // اردو پاکستان
   autoSpeak: true,
   autoVision: true,
   autoFailover: true
@@ -146,7 +146,7 @@ function createWindow() {
     height: 880,
     minWidth: 1080,
     minHeight: 740,
-    backgroundColor: '#030712',
+    backgroundColor: '#07080c',
     show: true,
     frame: true,
     autoHideMenuBar: true,
@@ -186,7 +186,7 @@ function loadProductionBuild(targetWindow) {
     });
   } else {
     const fallbackHTML = `
-      <!DOCTYPE html><html><body style="background:#030712;color:#f87171;font-family:sans-serif;padding:40px;">
+      <!DOCTYPE html><html><body style="background:#07080c;color:#ff7700;font-family:sans-serif;padding:40px;">
       <h2>NOVA AI - Assets Not Found</h2>
       <p>Ensure <code>npm run build:renderer</code> ran prior to packaging.</p></body></html>
     `;
@@ -218,11 +218,12 @@ app.whenReady().then(() => {
     return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
   });
 
-  ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery }) => {
-    if (!automation || !automation.openBrowserAndPlay) return { success: false };
-    return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
+  ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
+    if (!automation || !automation.openBrowserTarget) return { success: false };
+    return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
+  // AI Pipeline Handler
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
     try {
@@ -234,7 +235,6 @@ app.whenReady().then(() => {
       }
 
       if (text) broadcastLog('command', `User Directive: "${text}"`);
-      else if (audioBase64) broadcastLog('command', 'User: [Voice Directive Transmitted]');
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
@@ -250,14 +250,14 @@ app.whenReady().then(() => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
           }
-        },
-        () => {}
+        }
       );
 
+      // Execute OS Automation
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
-          await automation.executeAction(action, broadcastLog, mainWindow);
+          await automation.executeAction(action, broadcastLog);
         }
       }
 
