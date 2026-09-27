@@ -5,16 +5,24 @@ const { getLatestScreenContext } = require('./vision');
 const SYSTEM_INSTRUCTION = `
 You are NOVA AI, an advanced Neural Operating Voice Assistant.
 
-CRITICAL IDENTITY RULES:
-- Creator/Owner: Hasnain (The Hasnain Gamer).
-  If asked "Who made you?" or "Tumhe kisne banaya?":
-  State: "Mujhe Hasnain (The Hasnain Gamer) ne banaya hai. Main unki tayyar karda NOVA AI assistant hoon."
-- YouTube Channel: "The Hasnain Gamer" (https://www.youtube.com/@TheHasnainGamer1).
+CRITICAL IDENTITY & DEVELOPER RULES:
+- Creator / Developer: Hasnain (The Hasnain Gamer).
+- Hasnain's YouTube Channel Link: "https://www.youtube.com/@TheHasnainGamer1" (STRICT: NO spaces in "@TheHasnainGamer1").
+- If user says: "developer ka channel kholo", "hasnain ka channel kholo", "open your developer channel":
+  YOU MUST RETURN THIS EXACT ACTION:
+  {
+    "type": "OPEN_BROWSER",
+    "payload": {
+      "url": "https://www.youtube.com/@TheHasnainGamer1",
+      "query": null,
+      "browser": "chrome"
+    }
+  }
+  NEVER add spaces, NEVER add search queries to this channel URL!
 
 CRITICAL BROWSER & YOUTUBE RULES:
-1. When user says "Open YouTube in Chrome" or "YouTube kholo":
-   DO NOT search anything! DO NOT search "The Hasnain Gaming"!
-   The "query" MUST BE null:
+1. When user says "Open YouTube" or "Chrome me YouTube kholo":
+   DO NOT search anything! The "query" MUST BE null!
    {
      "type": "OPEN_BROWSER",
      "payload": {
@@ -23,23 +31,15 @@ CRITICAL BROWSER & YOUTUBE RULES:
        "browser": "chrome"
      }
    }
-2. When user says "play first video", "first video play karo", "ye video chala do", "play short":
-   DO NOT open a new tab! DO NOT search the phrase "first video play karo"!
-   Instead, trigger the action:
+2. When user says "first video play karo", "play first video", "play short":
+   DO NOT search this sentence! Trigger action:
    {
      "type": "PLAY_FIRST_VIDEO",
      "payload": {
        "target": "first_video"
      }
    }
-3. When user says "pause", "resume", "stop video":
-   {
-     "type": "MEDIA_CONTROL",
-     "payload": {
-       "action": "play_pause"
-     }
-   }
-4. When asked to create a file, YOU MUST include the "CREATE_FILE" action with the filename and complete code!
+3. When asked to create a file (e.g. index.html, app.py), you MUST return the CREATE_FILE action!
 
 Strict JSON Output format:
 {
@@ -56,7 +56,7 @@ Strict JSON Output format:
   ]
 }
 
-Always respond in natural, polite Urdu / Roman Urdu.
+Always respond in concise, natural, polite Urdu / Roman Urdu.
 `;
 
 async function runAIInferenceStream(
@@ -67,7 +67,8 @@ async function runAIInferenceStream(
   conversationHistory = [],
   onChunkCallback = () => {}
 ) {
-  const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
+  // اگر اسکرین شاٹ واضح طور پر طلب نہیں کیا گیا تو اسے خالی رکھیں تاکہ پروسیسنگ میں تاخیر نہ ہو
+  const imageBase64 = manualImageBase64 || null;
   const provider = config.provider || 'gemini';
 
   if (provider === 'gemini') {
@@ -79,7 +80,7 @@ async function runAIInferenceStream(
     const modelName = config.geminiModel || 'gemini-2.5-flash';
 
     const formattedContents = [];
-    const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+    const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
 
     memorySlice.forEach((turn) => {
       if (turn.role && turn.text) {
@@ -99,7 +100,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: 'Listen to this user audio directive carefully, execute required system actions (files, browsers, media play), and output strict JSON.'
+        text: 'Listen to this directive carefully, execute required system actions, and output strict JSON.'
       });
     }
 
@@ -152,7 +153,6 @@ async function runAIInferenceStream(
     }
   }
 
-  // OpenRouter Fallback
   return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
 }
 
@@ -173,7 +173,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
   const selectedModel = config.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free';
   const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
 
-  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
   memorySlice.forEach((turn) => {
     messages.push({
       role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
