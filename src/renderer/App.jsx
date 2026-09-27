@@ -6,10 +6,14 @@ import {
   Settings,
   Send,
   Plus,
+  Moon,
+  Volume2,
+  Cpu,
+  HardDrive,
   Activity,
+  Code2,
+  CheckCircle2,
   Mic,
-  Bell,
-  User,
   Youtube,
   ExternalLink
 } from 'lucide-react';
@@ -58,7 +62,6 @@ export default function App() {
   }, [chatHistory]);
 
   useEffect(() => {
-    // Live CPU Fluctuation Simulation
     const cpuInterval = setInterval(() => {
       setCpuUsage(Math.floor(36 + Math.sin(Date.now() / 1500) * 8 + Math.random() * 4));
     }, 2000);
@@ -125,7 +128,9 @@ export default function App() {
 
         analyser.getByteFrequencyData(dataArray);
         let sum = 0;
-        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
         const average = sum / bufferLength;
         setAudioLevel(Math.min(1.0, Math.max(0.18, average / 65)));
 
@@ -212,6 +217,7 @@ export default function App() {
     }
   };
 
+  // آواز سے بولنے کا سسٹم (ڈیفالٹ اردو اور ہندی ترجیح)
   const speakWithNativeTTS = (text) => {
     cancelNativeSpeech();
 
@@ -227,18 +233,20 @@ export default function App() {
     const utterance = new SpeechSynthesisUtterance(text);
     window._activeUtterance = utterance;
 
-    utterance.rate = 1.05;
+    utterance.rate = 1.0;
     utterance.pitch = 1.0;
 
     const voices = window.speechSynthesis.getVoices();
     if (voices && voices.length > 0) {
+      // سب سے پہلی ترجیح اردو، پھر ہندی، پھر انگلش نیچرل
       const selected = voices.find(
         (v) =>
-          v.lang.includes('ur') ||
-          v.lang.includes('hi') ||
+          v.lang.toLowerCase().includes('ur') ||
+          v.name.toLowerCase().includes('urdu') ||
+          v.lang.toLowerCase().includes('hi') ||
+          v.name.toLowerCase().includes('hindi') ||
           v.name.includes('Aria') ||
-          v.name.includes('Natural') ||
-          v.lang.startsWith('en')
+          v.name.includes('Natural')
       );
       if (selected) utterance.voice = selected;
     }
@@ -271,7 +279,6 @@ export default function App() {
     setInputText('');
     setSphereState('thinking');
 
-    // Add command to terminal log immediately
     if (prompt) {
       setLogs((prev) => [...prev, { timestamp: 'CMD', message: `user.query("${prompt}")` }]);
     }
@@ -304,22 +311,23 @@ export default function App() {
     }
   };
 
-  const openHasnainYouTube = () => {
+  // حسنائین کا یوٹیوب چینل براہ راست گوگل کروم میں کھولنے کا فنکشن (بغیر کسی اسپیس کے)
+  const openHasnainYouTubeInChrome = () => {
+    const channelUrl = 'https://www.youtube.com/@TheHasnainGamer1';
     if (window.novaAPI.openBrowser) {
-      window.novaAPI.openBrowser({ url: 'https://www.youtube.com/@TheHasnainGamer1' });
+      window.novaAPI.openBrowser({ url: channelUrl, browser: 'chrome' });
     } else {
-      window.open('https://www.youtube.com/@TheHasnainGamer1', '_blank');
+      window.open(channelUrl, '_blank');
     }
   };
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#07080c] text-slate-100 font-sans overflow-hidden select-none p-4 space-y-4">
-      {/* 1. TOP BAR (Matching Image Layout) */}
+      {/* 1. TOP BAR (فالتو آئیکنز ہٹا دیے گئے ہیں اور چینل کا نام بغیر اسپیس ہے) */}
       <header className="flex items-center justify-between px-6 py-3.5 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_25px_rgba(255,119,0,0.15)] backdrop-blur-xl">
         {/* Hexagonal Gold Logo & NOVA AI Title */}
         <div className="flex items-center space-x-3.5">
           <div className="relative flex items-center justify-center w-10 h-10">
-            {/* Hexagon Amber Icon */}
             <svg viewBox="0 0 100 100" className="w-10 h-10 text-[#ff8800] filter drop-shadow-[0_0_8px_#ff8800]">
               <polygon
                 points="50 5, 90 25, 90 75, 50 95, 10 75, 10 25"
@@ -345,17 +353,17 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Status & Actions */}
+        {/* Right Status & Actions (No Bell, No User Icon) */}
         <div className="flex items-center space-x-5">
-          {/* Hasnain Channel YouTube Subscribe Button */}
+          {/* Hasnain Channel YouTube Subscribe Button (Direct Chrome Open - NO SPACES) */}
           <button
-            onClick={openHasnainYouTube}
-            className="flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-red-600 to-[#ff7700] hover:from-red-500 hover:to-[#ff9900] text-white text-xs font-mono font-bold transition shadow-[0_0_15px_rgba(255,119,0,0.4)]"
-            title="Visit Creator's YouTube Channel"
+            onClick={openHasnainYouTubeInChrome}
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-[#ff7700] hover:from-red-500 hover:to-[#ff9900] text-white text-xs font-mono font-bold transition shadow-[0_0_15px_rgba(255,119,0,0.4)]"
+            title="Open in Google Chrome: @TheHasnainGamer1"
           >
             <Youtube className="w-4 h-4" />
-            <span>The Hasnain Gamer</span>
-            <ExternalLink className="w-3 h-3 opacity-80" />
+            <span>@TheHasnainGamer1</span>
+            <ExternalLink className="w-3.5 h-3.5 opacity-80" />
           </button>
 
           {/* Online Indicator */}
@@ -364,15 +372,9 @@ export default function App() {
             <span className="text-emerald-400 font-semibold tracking-wide">ONLINE</span>
           </div>
 
-          <div className="flex items-center space-x-3 pl-3 border-l border-slate-800 text-slate-400">
+          <div className="flex items-center pl-3 border-l border-slate-800 text-slate-400">
             <div className="p-2 rounded-xl bg-[#141824] border border-slate-800 text-[#ff8800]">
               <Mic className="w-4 h-4 animate-pulse" />
-            </div>
-            <div className="p-2 rounded-xl bg-[#141824] border border-slate-800 hover:text-white transition cursor-pointer">
-              <Bell className="w-4 h-4" />
-            </div>
-            <div className="p-2 rounded-xl bg-[#141824] border border-slate-800 hover:text-white transition cursor-pointer">
-              <User className="w-4 h-4" />
             </div>
           </div>
         </div>
@@ -410,7 +412,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* CENTER COLUMN: VOICE INTERFACE (Exact Radar + Waveform) */}
+        {/* CENTER COLUMN: VOICE INTERFACE (Radar + Waveform) */}
         <div className="col-span-12 md:col-span-7 flex flex-col items-center justify-between p-4 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_30px_rgba(255,119,0,0.15)] backdrop-blur-xl relative overflow-hidden">
           <div className="w-full flex justify-between items-center text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold z-10">
             <span className="flex items-center space-x-1.5">
@@ -425,7 +427,7 @@ export default function App() {
             <NovaSphere state={sphereState} audioLevel={audioLevel} />
           </div>
 
-          {/* Bottom Voice State Label (Matching Image) */}
+          {/* Bottom Voice State Label */}
           <div className="z-10 mb-2 flex items-center space-x-2 px-5 py-1.5 rounded-full bg-[#121522] border border-[#ff7700]/40 text-[#ffaa00] font-mono text-xs shadow-[0_0_15px_rgba(255,119,0,0.2)]">
             <span className="w-1.5 h-1.5 rounded-full bg-[#ff8800] animate-pulse" />
             <span className="tracking-widest uppercase">
@@ -449,7 +451,7 @@ export default function App() {
               </span>
             </div>
 
-            {/* Glowing Amber Sparkline Graph matching the image */}
+            {/* Glowing Amber Sparkline Graph */}
             <div className="w-full h-24 my-2">
               <svg viewBox="0 0 200 80" className="w-full h-full overflow-visible">
                 <defs>
@@ -458,12 +460,10 @@ export default function App() {
                     <stop offset="100%" stopColor="#ff7700" stopOpacity="0.0" />
                   </linearGradient>
                 </defs>
-                {/* Area */}
                 <polygon
                   points="0,60 25,50 50,65 75,45 100,55 125,35 150,40 175,25 200,15 200,80 0,80"
                   fill="url(#amberGrad)"
                 />
-                {/* Line */}
                 <polyline
                   points="0,60 25,50 50,65 75,45 100,55 125,35 150,40 175,25 200,15"
                   fill="none"
@@ -471,7 +471,6 @@ export default function App() {
                   strokeWidth="2.5"
                   className="filter drop-shadow-[0_0_6px_#ff8800]"
                 />
-                {/* Glowing End Dot */}
                 <circle cx="200" cy="15" r="4" fill="#ffffff" stroke="#ff8800" strokeWidth="2" />
               </svg>
             </div>
@@ -485,7 +484,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* 3. BOTTOM COMMAND CONSOLE (Exact Terminal from Image) */}
+      {/* 3. BOTTOM COMMAND CONSOLE */}
       <div className="h-44 flex flex-col p-4 bg-[#0d0f17]/95 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_25px_rgba(255,119,0,0.15)] backdrop-blur-xl">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80 mb-2">
           <div className="flex items-center space-x-2 text-[11px] font-mono tracking-widest font-bold">
@@ -523,7 +522,7 @@ export default function App() {
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Type directive or speak naturally into mic (e.g. 'Open Chrome to YouTube The Hasnain Gaming')..."
+            placeholder="Direct command or speak naturally (e.g. 'Open YouTube in Chrome')..."
             className="flex-1 bg-transparent px-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none font-mono"
           />
           <button
@@ -535,6 +534,7 @@ export default function App() {
         </form>
       </div>
 
+      {/* Settings Modal (New Amber / Orange Cyberpunk Theme) */}
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
