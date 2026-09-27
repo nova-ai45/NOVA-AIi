@@ -14,7 +14,7 @@ import {
   Code2,
   CheckCircle2,
   Mic,
-  MicOff
+  MessageSquare
 } from 'lucide-react';
 
 export default function App() {
@@ -25,6 +25,16 @@ export default function App() {
   const [isFirstRun, setIsFirstRun] = useState(false);
   const [settings, setSettings] = useState({});
   const [audioLevel, setAudioLevel] = useState(0.18);
+
+  // Persistent Multi-Turn Conversation Memory Buffer
+  const [chatHistory, setChatHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('nova_chat_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (_) {
+      return [];
+    }
+  });
 
   const [greetingVisible, setGreetingVisible] = useState(true);
   const [statusMessage, setStatusMessage] = useState('Listening...');
@@ -37,7 +47,7 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState('');
   const [sysMetrics, setSysMetrics] = useState({ cpu: 12, ram: 44, disk: 31 });
 
-  // Real-time voice engine references
+  // Real-time Voice Engine & Push-to-Talk Hotkey References
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const accumulatedSpeechRef = useRef('');
@@ -47,6 +57,13 @@ export default function App() {
   const audioContextRef = useRef(null);
   const animFrameRef = useRef(null);
   const canvasBgRef = useRef(null);
+
+  useEffect(() => {
+    // Persist conversation history updates
+    try {
+      localStorage.setItem('nova_chat_history', JSON.stringify(chatHistory.slice(-20)));
+    } catch (_) {}
+  }, [chatHistory]);
 
   useEffect(() => {
     const updateClock = () => {
@@ -96,13 +113,17 @@ export default function App() {
       } else if (st === 'speaking') {
         setStatusMessage('NOVA is speaking...');
       } else if (st === 'listening') {
-        setStatusMessage('Listening...');
+        setStatusMessage('Listening to your voice...');
       } else if (st === 'idle') {
         setStatusMessage('Listening...');
       }
     });
 
-    // Real-time AI stream listeners
+    // IPC listener for OS Global Push-to-Talk Hotkey (Default: Alt+Space)
+    const unsubHotkey = window.novaAPI.onHotkeyTrigger ? window.novaAPI.onHotkeyTrigger(() => {
+      handleGlobalPushToTalkToggle();
+    }) : () => {};
+
     if (window.novaAPI.onAiStreamChunk) {
       window.novaAPI.onAiStreamChunk((chunk) => {
         setStatusMessage(`Streaming: ${chunk.slice(0, 35)}...`);
@@ -115,7 +136,6 @@ export default function App() {
       });
     }
 
-    // Absolute shutdown listener: stop all media tracks when main process triggers shutdown
     if (window.novaAPI.onSystemShutdown) {
       window.novaAPI.onSystemShutdown(() => {
         destroySpeechRecognition();
@@ -136,11 +156,46 @@ export default function App() {
       clearTimeout(greetingTimer);
       unsubLog();
       unsubState();
+      unsubHotkey();
       destroySpeechRecognition();
       cancelActiveSpeech();
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
+
+  // Global Push-to-Talk Hotkey Toggle Logic (Alt+Space)
+  const handleGlobalPushToTalkToggle = () => {
+    if (isProcessingRef.current) return;
+
+    if (isSpeechRunningRef.current) {
+      // Key pressed again -> Stop Recording & immediately Submit
+      const speech = accumulatedSpeechRef.current.trim();
+      accumulatedSpeechRef.current = '';
+      stopSpeechRecognition();
+      if (speech.length > 0) {
+        handleExecute(speech);
+      } else {
+        setSphereState('idle');
+        setStatusMessage('Listening...');
+      }
+    } else {
+      // Key pressed -> Start recording immediately
+      accumulatedSpeechRef.current = '';
+      cancelActiveSpeech();
+      startSpeechRecognition();
+      setSphereState('listening');
+      setStatusMessage(`NOVA: Listening [${settings.globalHotkey || 'Alt+Space'}]...`);
+    }
+  };
+
+  const handleClearMemory = () => {
+    setChatHistory([]);
+    try {
+      localStorage.removeItem('nova_chat_history');
+    } catch (_) {}
+    setStatusMessage('Context memory purged.');
+    setTimeout(() => setStatusMessage('Listening...'), 1800);
+  };
 
   const initBackgroundCanvasShader = () => {
     const canvas = canvasBgRef.current;
@@ -213,7 +268,6 @@ export default function App() {
     };
   };
 
-  // Ultra-responsive Voice Engine: interim results + strict 900ms silence timeout
   const initSpeechRecognitionEngine = () => {
     const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechConstructor) {
@@ -251,12 +305,11 @@ export default function App() {
           setSphereState('listening');
           setStatusMessage(`"${trimmed}"`);
 
-          // Clear any active silence countdown
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
           }
 
-          // Strict 900ms Silence Timeout: user stopped speaking -> immediately dispatch to AI
+          // Strict 900ms silence timeout auto-submit
           silenceTimerRef.current = setTimeout(() => {
             const finalSpeech = accumulatedSpeechRef.current.trim();
             if (finalSpeech.length > 0 && !isProcessingRef.current) {
@@ -276,7 +329,6 @@ export default function App() {
 
       recognition.onend = () => {
         isSpeechRunningRef.current = false;
-        // Immediate clean restart if not currently processing AI output
         if (!isProcessingRef.current) {
           setTimeout(() => {
             startSpeechRecognition();
@@ -410,6 +462,7 @@ export default function App() {
     }
   };
 
+  // Unified pipeline: Appends to Multi-Turn Chat Memory Buffer & Sends to AI
   const handleExecute = async (overridePrompt = null) => {
     const prompt = overridePrompt || inputText;
     if (!prompt.trim()) return;
@@ -422,14 +475,32 @@ export default function App() {
     setSphereState('thinking');
     setStatusMessage('JARVIS Thinking...');
 
+    // Snapshot current conversation history to send
+    const historySnapshot = [...chatHistory];
+
     const result = await window.novaAPI.processCommand({
       text: prompt,
       audioBase64: null,
+      conversationHistory: historySnapshot,
       includeVision: true
     });
 
-    if (result && result.audioBase64) {
-      playSynthesizedVoice(result.audioBase64);
+    if (result && result.success) {
+      // Append user prompt and model response to conversation memory
+      setChatHistory((prev) => [
+        ...prev,
+        { role: 'user', text: prompt },
+        { role: 'model', text: result.spokenResponse || 'Action executed.' }
+      ]);
+
+      if (result.audioBase64) {
+        playSynthesizedVoice(result.audioBase64);
+      } else {
+        isProcessingRef.current = false;
+        setSphereState('idle');
+        setStatusMessage('Listening...');
+        startSpeechRecognition();
+      }
     } else {
       isProcessingRef.current = false;
       setSphereState('idle');
@@ -465,18 +536,18 @@ export default function App() {
           <button
             onClick={() => setSettingsOpen(true)}
             className="p-3.5 rounded-2xl text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 border border-transparent hover:border-slate-800 transition-all"
-            title="AI Config & Keys"
+            title="Settings & Persistent Memory"
           >
             <Settings className="w-5 h-5" />
           </button>
         </nav>
 
         <div className="flex flex-col items-center space-y-1">
-          <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-slate-900/90 border border-emerald-500/30">
+          <div className="flex items-center space-x-1 px-2 py-1 rounded-full bg-slate-900/90 border border-emerald-500/30">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981] animate-ping" />
-            <span className="text-[9px] font-mono text-emerald-300 font-semibold">LIVE</span>
+            <span className="text-[9px] font-mono text-emerald-300 font-semibold truncate max-w-[50px]">{settings.globalHotkey || 'Alt+Space'}</span>
           </div>
-          <span className="text-[8px] text-slate-500 font-mono">900ms VAD</span>
+          <span className="text-[8px] text-slate-500 font-mono">Push-to-Talk</span>
         </div>
       </aside>
 
@@ -491,6 +562,13 @@ export default function App() {
               <span className="truncate max-w-lg">{statusMessage}</span>
             </div>
           </div>
+
+          {chatHistory.length > 0 && (
+            <div className="flex items-center space-x-2 text-[10px] font-mono text-purple-300 bg-purple-950/40 px-3 py-1 rounded-full border border-purple-500/30">
+              <MessageSquare className="w-3 h-3 text-purple-400" />
+              <span>Memory: {chatHistory.length / 2} turns</span>
+            </div>
+          )}
         </header>
 
         <div className="flex-1 flex relative overflow-hidden">
@@ -504,7 +582,7 @@ export default function App() {
                   <div className="text-sm font-bold tracking-wide">
                     Hello! I'm <span className="text-purple-400 font-extrabold">NOVA</span>
                   </div>
-                  <div className="text-xs text-slate-400">Real-time speech active. Auto-submits on 900ms pause.</div>
+                  <div className="text-xs text-slate-400">Conversational memory active. Push-to-Talk: [{settings.globalHotkey || 'Alt+Space'}]</div>
                 </div>
               </div>
             ) : (
@@ -547,9 +625,9 @@ export default function App() {
               >
                 <button
                   type="button"
-                  onClick={() => handleExecute('Create index.html with a futuristic landing page on desktop and open it')}
+                  onClick={() => handleExecute('Remember this: my preferred project directory is C:/Projects')}
                   className="w-10 h-10 rounded-full bg-slate-900 border border-slate-700/80 flex items-center justify-center text-slate-300 hover:text-cyan-400 hover:border-cyan-400 transition"
-                  title="Generate Visual Code Project"
+                  title="Test Context Memory"
                 >
                   <Plus className="w-5 h-5" />
                 </button>
@@ -558,7 +636,7 @@ export default function App() {
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Speak naturally, or type directive (e.g. 'Search YouTube for The Hasnain Gaming')..."
+                  placeholder={`Speak, hit [${settings.globalHotkey || 'Alt+Space'}], or type your directive...`}
                   className="flex-1 bg-transparent px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none font-sans"
                 />
 
@@ -648,7 +726,7 @@ export default function App() {
             <div className="flex-1 flex items-end justify-end">
               <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-500">
                 <span className="w-6 h-[1px] bg-slate-800" />
-                <span>NOVA v3.0 &bull; Fast-Stream JARVIS</span>
+                <span>NOVA v3.2 &bull; Context Memory Active</span>
               </div>
             </div>
           </aside>
@@ -660,6 +738,7 @@ export default function App() {
         isFirstRun={isFirstRun}
         onClose={() => setSettingsOpen(false)}
         currentSettings={settings}
+        onClearMemory={handleClearMemory}
         onSave={(newCfg) => {
           setSettings(newCfg);
           localStorage.setItem('nova_persistent_config', JSON.stringify(newCfg));
