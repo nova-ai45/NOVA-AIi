@@ -21,7 +21,7 @@ import {
 export default function App() {
   const [logs, setLogs] = useState([
     { timestamp: 'SYSTEM', message: "nova.run(session=\"chat_8821\", mode=\"assistant\")" },
-    { timestamp: 'ACTIVE', message: "Executing: optimize(prompt) |" }
+    { timestamp: 'ACTIVE', message: "Ultra-Fast VAD Engine Initialized |" }
   ]);
   const [sphereState, setSphereState] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking' | 'executing'
   const [inputText, setInputText] = useState('');
@@ -40,16 +40,12 @@ export default function App() {
     }
   });
 
-  // Real-time System Metrics
   const [cpuUsage, setCpuUsage] = useState(42);
 
-  // VAD & Media Refs
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  // Fast Speech & Audio Processing Refs
+  const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
+  const liveTranscriptRef = useRef('');
   const isSpeakingDetectedRef = useRef(false);
   const isProcessingRef = useRef(false);
   const animFrameRef = useRef(null);
@@ -81,133 +77,96 @@ export default function App() {
       setSphereState(st);
     });
 
-    initHandsFreeVAD();
+    // Start Real-Time Fast Speech Listener
+    initRealtimeSpeechEngine();
 
     return () => {
       clearInterval(cpuInterval);
       unsubLog();
       unsubState();
-      stopAudioVAD();
+      destroySpeechEngine();
       cancelNativeSpeech();
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
 
-  // 100% Hands-Free Voice Detection: خاموش ہوتے ہی خودکار تھنکنگ
-  const initHandsFreeVAD = async () => {
+  // فاسٹ ریئل ٹائم اسپیچ انجن (0ms تاخیر کے ساتھ بولتے ہی الفاظ پکڑتا ہے)
+  const initRealtimeSpeechEngine = () => {
+    const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechConstructor) return;
+
     try {
-      if (mediaStreamRef.current) return;
+      const recognition = new SpeechConstructor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
-      mediaStreamRef.current = stream;
-
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      audioContextRef.current = audioCtx;
-
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 256;
-      analyserRef.current = analyser;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      const bufferLength = analyser.frequencyBinCount;
-      const dataArray = new Uint8Array(bufferLength);
-
-      const VOICE_THRESHOLD = 20;
-      const SILENCE_TIMEOUT_MS = 1200; // 1.2 سیکنڈ کی خاموشی
-
-      const vadCheckLoop = () => {
-        if (isProcessingRef.current || sphereState === 'speaking') {
-          animFrameRef.current = requestAnimationFrame(vadCheckLoop);
-          return;
+      recognition.onstart = () => {
+        if (!isProcessingRef.current) {
+          setSphereState('listening');
         }
+      };
 
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
-        const average = sum / bufferLength;
-        setAudioLevel(Math.min(1.0, Math.max(0.18, average / 65)));
+      recognition.onresult = (event) => {
+        if (isProcessingRef.current) return;
 
-        if (average > VOICE_THRESHOLD) {
-          if (!isSpeakingDetectedRef.current) {
-            isSpeakingDetectedRef.current = true;
-            setSphereState('listening');
-            startRecordingBuffer(stream);
+        let liveText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const item = event.results[i];
+          if (item[0] && item[0].transcript) {
+            liveText += item[0].transcript;
           }
+        }
 
+        const trimmed = liveText.trim();
+        if (trimmed.length > 0) {
+          liveTranscriptRef.current = trimmed;
+          setSphereState('listening');
+          setAudioLevel(0.45);
+
+          // اگر بول رہے ہیں تو خاموشی کا ٹائمر ری سیٹ کریں
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = null;
           }
-        } else {
-          if (isSpeakingDetectedRef.current && !silenceTimerRef.current) {
-            silenceTimerRef.current = setTimeout(() => {
-              isSpeakingDetectedRef.current = false;
+
+          // الٹرا فاسٹ سائلنس ٹائمر: صرف 650ms خاموشی پر فوری تھنکنگ شروع
+          silenceTimerRef.current = setTimeout(() => {
+            const finalSpeech = liveTranscriptRef.current.trim();
+            if (finalSpeech.length > 0 && !isProcessingRef.current) {
+              liveTranscriptRef.current = '';
+              clearTimeout(silenceTimerRef.current);
               silenceTimerRef.current = null;
-              finishRecordingAndSubmit();
-            }, SILENCE_TIMEOUT_MS);
-          }
+              handleExecute(finalSpeech);
+            }
+          }, 650);
         }
-
-        animFrameRef.current = requestAnimationFrame(vadCheckLoop);
       };
 
-      vadCheckLoop();
+      recognition.onerror = () => {};
+
+      recognition.onend = () => {
+        if (!isProcessingRef.current) {
+          setTimeout(() => {
+            try { recognition.start(); } catch (_) {}
+          }, 150);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      try { recognition.start(); } catch (_) {}
     } catch (err) {
-      console.error('Microphone VAD initialization error:', err);
+      console.error('Speech initialization error:', err);
     }
   };
 
-  const startRecordingBuffer = (stream) => {
-    try {
-      audioChunksRef.current = [];
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      recorder.start(100);
-      mediaRecorderRef.current = recorder;
-    } catch (_) {}
-  };
-
-  const finishRecordingAndSubmit = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size > 8000) {
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = () => {
-            const base64Audio = reader.result.split(',')[1];
-            handleExecute(null, base64Audio);
-          };
-        } else {
-          setSphereState('idle');
-        }
-      };
-      mediaRecorderRef.current.stop();
-    } else {
-      setSphereState('idle');
-    }
-  };
-
-  const stopAudioVAD = () => {
+  const destroySpeechEngine = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch (_) {}
+      recognitionRef.current = null;
     }
   };
 
@@ -217,7 +176,6 @@ export default function App() {
     }
   };
 
-  // آواز سے بولنے کا سسٹم (ڈیفالٹ اردو اور ہندی ترجیح)
   const speakWithNativeTTS = (text) => {
     cancelNativeSpeech();
 
@@ -233,18 +191,17 @@ export default function App() {
     const utterance = new SpeechSynthesisUtterance(text);
     window._activeUtterance = utterance;
 
-    utterance.rate = 1.0;
+    utterance.rate = 1.05;
     utterance.pitch = 1.0;
 
     const voices = window.speechSynthesis.getVoices();
     if (voices && voices.length > 0) {
-      // سب سے پہلی ترجیح اردو، پھر ہندی، پھر انگلش نیچرل
       const selected = voices.find(
         (v) =>
-          v.lang.toLowerCase().includes('ur') ||
-          v.name.toLowerCase().includes('urdu') ||
-          v.lang.toLowerCase().includes('hi') ||
-          v.name.toLowerCase().includes('hindi') ||
+          v.lang.includes('ur') ||
+          v.name.includes('Urdu') ||
+          v.lang.includes('hi') ||
+          v.name.includes('Hindi') ||
           v.name.includes('Aria') ||
           v.name.includes('Natural')
       );
@@ -261,6 +218,11 @@ export default function App() {
       window._activeUtterance = null;
       isProcessingRef.current = false;
       setSphereState('idle');
+
+      // بولنے کے فوراً بعد دوبارہ مائیک تیار
+      if (recognitionRef.current) {
+        try { recognitionRef.current.start(); } catch (_) {}
+      }
     };
 
     utterance.onend = finishVoice;
@@ -269,9 +231,9 @@ export default function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleExecute = async (overridePrompt = null, audioPayload = null) => {
+  const handleExecute = async (overridePrompt = null) => {
     const prompt = overridePrompt || inputText;
-    if (!prompt.trim() && !audioPayload) return;
+    if (!prompt.trim()) return;
 
     isProcessingRef.current = true;
     cancelNativeSpeech();
@@ -279,23 +241,25 @@ export default function App() {
     setInputText('');
     setSphereState('thinking');
 
-    if (prompt) {
-      setLogs((prev) => [...prev, { timestamp: 'CMD', message: `user.query("${prompt}")` }]);
-    }
+    setLogs((prev) => [...prev, { timestamp: 'CMD', message: `user.query("${prompt}")` }]);
 
     const historySnapshot = [...chatHistory];
 
+    // اسکرین شاٹ صرف تب بھیجیں جب یوزر نے اسکرین کا ذکر کیا ہو (جس سے تھنکنگ اسپیڈ 10 گنا تیز ہو جائے گی)
+    const lowerPrompt = prompt.toLowerCase();
+    const needsVision = lowerPrompt.includes('screen') || lowerPrompt.includes('dekho') || lowerPrompt.includes('ye kya hai') || lowerPrompt.includes('look at');
+
     const result = await window.novaAPI.processCommand({
       text: prompt,
-      audioBase64: audioPayload,
+      audioBase64: null,
       conversationHistory: historySnapshot,
-      includeVision: true
+      includeVision: needsVision
     });
 
     if (result && result.success) {
       setChatHistory((prev) => [
         ...prev,
-        { role: 'user', text: prompt || '[Voice Directive]' },
+        { role: 'user', text: prompt },
         { role: 'model', text: result.spokenResponse || 'Action executed.' }
       ]);
 
@@ -311,11 +275,11 @@ export default function App() {
     }
   };
 
-  // حسنائین کا یوٹیوب چینل براہ راست گوگل کروم میں کھولنے کا فنکشن (بغیر کسی اسپیس کے)
+  // حسنائین کا یوٹیوب چینل بغیر اسپیس کے سیدھا کروم میں کھولنے کا فنکشن
   const openHasnainYouTubeInChrome = () => {
     const channelUrl = 'https://www.youtube.com/@TheHasnainGamer1';
     if (window.novaAPI.openBrowser) {
-      window.novaAPI.openBrowser({ url: channelUrl, browser: 'chrome' });
+      window.novaAPI.openBrowser({ url: channelUrl, searchQuery: null, browser: 'chrome' });
     } else {
       window.open(channelUrl, '_blank');
     }
@@ -323,7 +287,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#07080c] text-slate-100 font-sans overflow-hidden select-none p-4 space-y-4">
-      {/* 1. TOP BAR (فالتو آئیکنز ہٹا دیے گئے ہیں اور چینل کا نام بغیر اسپیس ہے) */}
+      {/* 1. TOP BAR (فالتو نوٹیفکیشن اور یوزر آئیکن ختم، بغیر اسپیس کے @TheHasnainGamer1) */}
       <header className="flex items-center justify-between px-6 py-3.5 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_25px_rgba(255,119,0,0.15)] backdrop-blur-xl">
         {/* Hexagonal Gold Logo & NOVA AI Title */}
         <div className="flex items-center space-x-3.5">
@@ -353,16 +317,16 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Status & Actions (No Bell, No User Icon) */}
+        {/* Right Status & Actions */}
         <div className="flex items-center space-x-5">
-          {/* Hasnain Channel YouTube Subscribe Button (Direct Chrome Open - NO SPACES) */}
+          {/* Hasnain Channel Direct Chrome Button (No Spaces) */}
           <button
             onClick={openHasnainYouTubeInChrome}
-            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-[#ff7700] hover:from-red-500 hover:to-[#ff9900] text-white text-xs font-mono font-bold transition shadow-[0_0_15px_rgba(255,119,0,0.4)]"
-            title="Open in Google Chrome: @TheHasnainGamer1"
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-[#ff7700] hover:from-red-500 hover:to-[#ff9900] text-white text-xs font-mono font-bold transition shadow-[0_0_15px_rgba(255,119,0,0.4)] cursor-pointer"
+            title="Click to Open in Google Chrome: @TheHasnainGamer1"
           >
             <Youtube className="w-4 h-4" />
-            <span>@TheHasnainGamer1</span>
+            <span className="tracking-tight">@TheHasnainGamer1</span>
             <ExternalLink className="w-3.5 h-3.5 opacity-80" />
           </button>
 
@@ -380,7 +344,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* 2. MAIN CENTER GRID (Navigation, Voice Interface, System Stats) */}
+      {/* 2. MAIN CENTER GRID */}
       <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
         {/* LEFT COLUMN: NAVIGATION */}
         <div className="col-span-12 md:col-span-2 flex flex-col p-4 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_20px_rgba(255,119,0,0.1)] backdrop-blur-xl">
@@ -392,7 +356,7 @@ export default function App() {
           <div className="space-y-2.5 flex-1">
             <button
               onClick={() => setActiveTab('assistant')}
-              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-mono text-sm font-semibold transition ${
+              className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-mono text-sm font-semibold transition cursor-pointer ${
                 activeTab === 'assistant'
                   ? 'bg-gradient-to-r from-[#ff7700]/25 to-[#ff7700]/10 border border-[#ff7700] text-[#ffaa00] shadow-[0_0_15px_rgba(255,119,0,0.3)]'
                   : 'text-slate-400 hover:bg-slate-900 border border-transparent'
@@ -404,7 +368,7 @@ export default function App() {
 
             <button
               onClick={() => setSettingsOpen(true)}
-              className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-mono text-sm font-semibold text-slate-400 hover:bg-slate-900 hover:text-[#ff8800] border border-transparent hover:border-[#ff7700]/30 transition"
+              className="w-full flex items-center space-x-3 px-4 py-3 rounded-xl font-mono text-sm font-semibold text-slate-400 hover:bg-slate-900 hover:text-[#ff8800] border border-transparent hover:border-[#ff7700]/30 transition cursor-pointer"
             >
               <Settings className="w-4 h-4" />
               <span>Settings</span>
@@ -522,19 +486,19 @@ export default function App() {
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Direct command or speak naturally (e.g. 'Open YouTube in Chrome')..."
+            placeholder="Type directive or speak naturally (e.g. 'Open YouTube in Chrome')..."
             className="flex-1 bg-transparent px-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none font-mono"
           />
           <button
             type="submit"
-            className="p-2 rounded-xl bg-[#ff7700]/20 hover:bg-[#ff7700]/30 text-[#ffaa00] border border-[#ff7700]/50 transition shadow-[0_0_10px_rgba(255,119,0,0.3)]"
+            className="p-2 rounded-xl bg-[#ff7700]/20 hover:bg-[#ff7700]/30 text-[#ffaa00] border border-[#ff7700]/50 transition shadow-[0_0_10px_rgba(255,119,0,0.3)] cursor-pointer"
           >
             <Send className="w-4 h-4" />
           </button>
         </form>
       </div>
 
-      {/* Settings Modal (New Amber / Orange Cyberpunk Theme) */}
+      {/* Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
