@@ -20,12 +20,11 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
     const fullPath = path.join(baseDir, fileName);
     fs.writeFileSync(fullPath, fileContent, 'utf-8');
 
-    // Confirm file was created physically
     if (fs.existsSync(fullPath)) {
       logCallback('automation', `file.created: "${fullPath}" [SUCCESS]`);
       return { success: true, path: fullPath };
     } else {
-      throw new Error('Disk write confirmation failed.');
+      throw new Error('Disk write verification failed.');
     }
   } catch (err) {
     logCallback('error', `file.creation_fault: "${err.message}"`);
@@ -34,17 +33,20 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
 }
 
 /**
- * Dedicated Browser Launcher: Opens explicit browser (Chrome, Edge, Brave, etc.)
+ * Smart Browser & YouTube Launcher
+ * - If no query provided: ONLY opens the URL (No unwanted search text!)
+ * - Dedicated Chrome launcher
  */
-async function openBrowserTarget(url, searchQuery = null, browserName = null, logCallback = () => {}) {
+async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
-    let finalUrl = url || 'https://www.google.com';
+    let finalUrl = url || 'https://www.youtube.com';
 
-    if (searchQuery) {
+    // Only append search query if user actually provided a search term
+    if (searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
       if (finalUrl.includes('youtube.com')) {
-        finalUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`;
+        finalUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery.trim())}`;
       } else {
-        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
+        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery.trim())}`;
       }
     }
 
@@ -52,10 +54,10 @@ async function openBrowserTarget(url, searchQuery = null, browserName = null, lo
       finalUrl = 'https://' + finalUrl;
     }
 
-    const requested = (browserName || '').toLowerCase();
-    logCallback('automation', `browser.launch(target="${finalUrl}", requested_browser="${browserName || 'auto'}")`);
+    const requested = (browserName || 'chrome').toLowerCase();
+    logCallback('automation', `browser.launch(target="${finalUrl}", browser="${requested}")`);
 
-    // Launch explicitly on Windows if user requested Chrome, Edge, or Brave
+    // Launch in Chrome explicitly on Windows
     if (process.platform === 'win32') {
       if (requested.includes('chrome')) {
         exec(`start chrome "${finalUrl}"`, (err) => {
@@ -64,11 +66,6 @@ async function openBrowserTarget(url, searchQuery = null, browserName = null, lo
         return { success: true, launchedUrl: finalUrl };
       } else if (requested.includes('edge')) {
         exec(`start msedge "${finalUrl}"`, (err) => {
-          if (err) shell.openExternal(finalUrl);
-        });
-        return { success: true, launchedUrl: finalUrl };
-      } else if (requested.includes('brave')) {
-        exec(`start brave "${finalUrl}"`, (err) => {
           if (err) shell.openExternal(finalUrl);
         });
         return { success: true, launchedUrl: finalUrl };
@@ -85,6 +82,41 @@ async function openBrowserTarget(url, searchQuery = null, browserName = null, lo
 }
 
 /**
+ * Automates Clicking & Playing YouTube Videos without opening search tabs
+ */
+async function playYouTubeVideoAction(actionType = 'first_video', logCallback = () => {}) {
+  try {
+    logCallback('automation', `youtube.action: "${actionType}" [EXECUTING]`);
+
+    if (process.platform === 'win32') {
+      if (actionType === 'first_video' || actionType === 'play_short') {
+        // Send Tab + Enter to active Chrome window to open first video
+        const psScript = `
+          Add-Type -AssemblyName System.Windows.Forms;
+          Start-Sleep -Milliseconds 600;
+          [System.Windows.Forms.SendKeys]::SendWait('{TAB 4}');
+          Start-Sleep -Milliseconds 250;
+          [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
+        `;
+        exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`);
+      } else {
+        // Play / Pause toggle via 'k' key (universal YouTube shortcut)
+        const psScript = `
+          Add-Type -AssemblyName System.Windows.Forms;
+          Start-Sleep -Milliseconds 300;
+          [System.Windows.Forms.SendKeys]::SendWait('k');
+        `;
+        exec(`powershell -NoProfile -Command "${psScript.replace(/\n/g, ' ')}"`);
+      }
+    }
+    return { success: true };
+  } catch (err) {
+    logCallback('error', `youtube.action_error: "${err.message}"`);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Universal Action Dispatcher
  */
 async function executeAction(actionObj, logCallback = () => {}) {
@@ -93,12 +125,17 @@ async function executeAction(actionObj, logCallback = () => {}) {
 
   switch (type) {
     case 'CREATE_FILE':
-    case 'CREATE_AND_STREAM_CODE':
       return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
 
     case 'OPEN_BROWSER':
-    case 'OPEN_BROWSER_AND_PLAY':
-      return await openBrowserTarget(payload.url, payload.query, payload.browser, logCallback);
+      return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
+
+    case 'PLAY_FIRST_VIDEO':
+    case 'PLAY_YOUTUBE_VIDEO':
+      return await playYouTubeVideoAction(payload?.target || 'first_video', logCallback);
+
+    case 'MEDIA_CONTROL':
+      return await playYouTubeVideoAction('play_pause', logCallback);
 
     case 'OPEN_APP':
       return new Promise((resolve) => {
@@ -109,19 +146,6 @@ async function executeAction(actionObj, logCallback = () => {}) {
           } else {
             logCallback('automation', `app.launched: "${payload.name}"`);
             resolve({ success: true });
-          }
-        });
-      });
-
-    case 'RUN_COMMAND':
-      return new Promise((resolve) => {
-        exec(payload.cmd, (err, stdout, stderr) => {
-          if (err) {
-            logCallback('error', `shell.fault: ${stderr || err.message}`);
-            resolve({ success: false, error: stderr || err.message });
-          } else {
-            logCallback('automation', `shell.output: ${stdout.trim()}`);
-            resolve({ success: true, output: stdout });
           }
         });
       });
