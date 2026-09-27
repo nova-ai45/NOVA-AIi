@@ -3,7 +3,7 @@ const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA, an advanced Neural Operating Voice Assistant equipped with always-on background screen vision, direct desktop code typing streaming, and Windows OS automation.
+You are NOVA, an ultra-low latency JARVIS-like Neural Voice Assistant equipped with desktop screen perception and direct Windows OS automation.
 
 CORE DIRECTIVE:
 1. Return responses strictly in JSON schema.
@@ -44,49 +44,102 @@ Available Action Types:
 `;
 
 /**
- * Primary Engine: Google Gemini (Supports 2.0 Flash / 1.5 Pro)
+ * Ultra-fast Streaming Inference Router with First-Sentence TTS dispatch
  */
-async function queryGemini(userPrompt, audioBase64, imageBase64, config) {
-  if (!config.geminiKey) {
-    throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
-  }
+async function runAIInferenceStream(
+  userPrompt,
+  audioBase64,
+  manualImageBase64,
+  config,
+  onChunkCallback = () => {},
+  onEarlySentenceCallback = () => {}
+) {
+  const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
+  const provider = config.provider || 'gemini';
 
-  const genAI = new GoogleGenerativeAI(config.geminiKey);
-  const modelName = config.geminiModel || 'gemini-2.0-flash';
+  // 1. Google Gemini 2.5 / 2.0 Flash Streaming Engine
+  if (provider === 'gemini') {
+    if (!config.geminiKey) {
+      throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
+    }
 
-  const parts = [];
-  if (audioBase64) {
-    parts.push({
-      inlineData: {
-        mimeType: 'audio/webm',
-        data: audioBase64
-      }
+    const genAI = new GoogleGenerativeAI(config.geminiKey);
+    const modelName = config.geminiModel || 'gemini-2.5-flash';
+
+    const parts = [];
+    if (audioBase64) {
+      parts.push({
+        inlineData: {
+          mimeType: 'audio/webm',
+          data: audioBase64
+        }
+      });
+    }
+    if (imageBase64) {
+      parts.push({
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: imageBase64
+        }
+      });
+    }
+    if (userPrompt) parts.push(userPrompt);
+
+    const model = genAI.getGenerativeModel({
+      model: modelName,
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: { responseMimeType: 'application/json' }
     });
-  }
-  if (imageBase64) {
-    parts.push({
-      inlineData: {
-        mimeType: 'image/jpeg',
-        data: imageBase64
+
+    try {
+      const responseStream = await model.generateContentStream(parts);
+      let fullText = '';
+      let earlySentenceFired = false;
+
+      for await (const chunk of responseStream.stream) {
+        const chunkText = chunk.text();
+        fullText += chunkText;
+        onChunkCallback(chunkText);
+
+        // Extract first spoken sentence for immediate verbal reply
+        if (!earlySentenceFired) {
+          const match = fullText.match(/"spokenResponse"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
+          if (match && match[1]) {
+            const currentSentence = match[1];
+            if (/[.!?]/.test(currentSentence)) {
+              earlySentenceFired = true;
+              onEarlySentenceCallback(currentSentence.trim());
+            }
+          }
+        }
       }
-    });
+
+      return JSON.parse(fullText);
+    } catch (err) {
+      const isQuotaError =
+        err.message.includes('429') ||
+        err.message.includes('quota') ||
+        err.message.includes('ResourceExhausted') ||
+        err.message.includes('503');
+
+      // Failover to OpenRouter on quota limit
+      if (isQuotaError && config.openrouterKey) {
+        return await queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCallback);
+      }
+      throw err;
+    }
   }
-  if (userPrompt) parts.push(userPrompt);
 
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction: SYSTEM_INSTRUCTION,
-    generationConfig: { responseMimeType: 'application/json' }
-  });
+  // 2. OpenRouter Streaming Gateway
+  if (provider === 'openrouter') {
+    return await queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCallback);
+  }
 
-  const result = await model.generateContent(parts);
-  return JSON.parse(result.response.text());
+  // 3. Custom / Groq Endpoint
+  return await queryCustomStream(userPrompt, imageBase64, config, onChunkCallback);
 }
 
-/**
- * Universal Multi-Model Engine: OpenRouter
- */
-async function queryOpenRouter(userPrompt, imageBase64, config) {
+async function queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCallback = () => {}) {
   if (!config.openrouterKey) {
     throw new Error('OpenRouter API key is missing. Please enter it in Settings.');
   }
@@ -113,19 +166,24 @@ async function queryOpenRouter(userPrompt, imageBase64, config) {
   }
   messages.push({ role: 'user', content });
 
-  const completion = await client.chat.completions.create({
+  const stream = await client.chat.completions.create({
     model: selectedModel,
     messages,
-    response_format: { type: 'json_object' }
+    response_format: { type: 'json_object' },
+    stream: true
   });
 
-  return JSON.parse(completion.choices[0].message.content);
+  let fullText = '';
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content || '';
+    fullText += text;
+    onChunkCallback(text);
+  }
+
+  return JSON.parse(fullText);
 }
 
-/**
- * Custom / Local Gateway (e.g. Groq, Ollama)
- */
-async function queryCustom(userPrompt, imageBase64, config) {
+async function queryCustomStream(userPrompt, imageBase64, config, onChunkCallback = () => {}) {
   const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
   const client = new OpenAI({
     baseURL,
@@ -137,61 +195,23 @@ async function queryCustom(userPrompt, imageBase64, config) {
     { role: 'user', content: userPrompt || 'Analyze context and execute instructions.' }
   ];
 
-  const completion = await client.chat.completions.create({
+  const stream = await client.chat.completions.create({
     model: config.customModel || 'llama-3.3-70b-versatile',
     messages,
-    response_format: { type: 'json_object' }
+    response_format: { type: 'json_object' },
+    stream: true
   });
 
-  return JSON.parse(completion.choices[0].message.content);
-}
-
-/**
- * Multi-Model Failover Inference Router
- */
-async function runAIInference(userPrompt, audioBase64, manualImageBase64, config) {
-  const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
-  const provider = config.provider || 'gemini';
-
-  if (provider === 'openrouter') {
-    try {
-      return await queryOpenRouter(userPrompt, imageBase64, config);
-    } catch (err) {
-      if (config.geminiKey) return await queryGemini(userPrompt, audioBase64, imageBase64, config);
-      throw err;
-    }
+  let fullText = '';
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content || '';
+    fullText += text;
+    onChunkCallback(text);
   }
 
-  if (provider === 'gemini') {
-    try {
-      return await queryGemini(userPrompt, audioBase64, imageBase64, config);
-    } catch (err) {
-      const isQuotaError =
-        err.message.includes('429') ||
-        err.message.includes('quota') ||
-        err.message.includes('ResourceExhausted') ||
-        err.message.includes('503');
-
-      // Fail-Safe Chain Step 2: Auto switch to OpenRouter
-      if (isQuotaError && config.openrouterKey) {
-        try {
-          return await queryOpenRouter(userPrompt, imageBase64, config);
-        } catch (_) {}
-      }
-
-      // Fail-Safe Chain Step 3: Auto switch to Groq / Custom
-      if (isQuotaError && config.customKey) {
-        try {
-          return await queryCustom(userPrompt, imageBase64, config);
-        } catch (_) {}
-      }
-      throw err;
-    }
-  }
-
-  return await queryCustom(userPrompt, imageBase64, config);
+  return JSON.parse(fullText);
 }
 
 module.exports = {
-  runAIInference
+  runAIInferenceStream
 };
