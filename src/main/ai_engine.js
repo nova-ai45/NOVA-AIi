@@ -3,28 +3,18 @@ const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA, an advanced Neural Operating Voice Assistant equipped with continuous conversational memory context, real-time desktop vision, and direct Windows OS automation.
+You are NOVA, an advanced Neural Operating Voice Assistant equipped with continuous conversational memory, real-time desktop perception, and direct Windows OS automation.
 
 CORE DIRECTIVE:
 1. Maintain memory and conversational awareness across previous chat turns.
-2. Return responses strictly in JSON schema.
-3. Keep spoken responses polite, crisp, and executive.
-4. When writing code or project files, prefer "CREATE_AND_STREAM_CODE" so the user visually sees the typing in real time.
+2. Listen to human voice directives directly and execute requested tasks with high precision.
+3. Keep spoken responses polite, crisp, helpful, and natural (in Roman Urdu / Urdu or English matching the user).
+4. Return responses strictly in JSON schema.
 
 JSON Output Schema:
 {
-  "spokenResponse": "Sir, I remember your request and have proceeded with the task.",
+  "spokenResponse": "Sir, I have analyzed your request and executed the command.",
   "actions": [
-    {
-      "type": "CREATE_AND_STREAM_CODE",
-      "payload": {
-        "directoryName": "NovaProject",
-        "filename": "index.html",
-        "content": "<!DOCTYPE html><html><head><title>NOVA App</title></head><body><h1>NOVA Online</h1></body></html>",
-        "executeImmediately": true,
-        "openVisualNotepad": true
-      }
-    },
     {
       "type": "OPEN_BROWSER_AND_PLAY",
       "payload": {
@@ -43,9 +33,6 @@ Available Action Types:
 - RUN_COMMAND: { cmd }
 `;
 
-/**
- * Ultra-fast Streaming Inference Router with Multi-Turn Memory Management
- */
 async function runAIInferenceStream(
   userPrompt,
   audioBase64,
@@ -58,7 +45,7 @@ async function runAIInferenceStream(
   const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
   const provider = config.provider || 'gemini';
 
-  // 1. Google Gemini 2.5 / 2.0 / 3.7 Flash Multi-Turn Engine
+  // 1. Google Gemini Multi-Modal Engine (نیٹو آڈیو ان پٹ کو براہ راست سمجھتا ہے)
   if (provider === 'gemini') {
     if (!config.geminiKey) {
       throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
@@ -67,7 +54,6 @@ async function runAIInferenceStream(
     const genAI = new GoogleGenerativeAI(config.geminiKey);
     const modelName = config.geminiModel || 'gemini-2.5-flash';
 
-    // Format conversation history for Gemini (maintaining last 20 turns)
     const formattedContents = [];
     const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
 
@@ -80,7 +66,6 @@ async function runAIInferenceStream(
       }
     });
 
-    // Construct current prompt parts
     const currentParts = [];
     if (audioBase64) {
       currentParts.push({
@@ -89,7 +74,11 @@ async function runAIInferenceStream(
           data: audioBase64
         }
       });
+      currentParts.push({
+        text: 'Listen to this user audio directive carefully, fulfill the user intent, and output the response in the required JSON schema.'
+      });
     }
+
     if (imageBase64) {
       currentParts.push({
         inlineData: {
@@ -98,6 +87,7 @@ async function runAIInferenceStream(
         }
       });
     }
+
     if (userPrompt) {
       currentParts.push({ text: userPrompt });
     }
@@ -116,23 +106,11 @@ async function runAIInferenceStream(
     try {
       const responseStream = await model.generateContentStream({ contents: formattedContents });
       let fullText = '';
-      let earlySentenceFired = false;
 
       for await (const chunk of responseStream.stream) {
         const chunkText = chunk.text();
         fullText += chunkText;
         onChunkCallback(chunkText);
-
-        if (!earlySentenceFired) {
-          const match = fullText.match(/"spokenResponse"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
-          if (match && match[1]) {
-            const currentSentence = match[1];
-            if (/[.!?]/.test(currentSentence)) {
-              earlySentenceFired = true;
-              onEarlySentenceCallback(currentSentence.trim());
-            }
-          }
-        }
       }
 
       return JSON.parse(fullText);
@@ -150,7 +128,7 @@ async function runAIInferenceStream(
     }
   }
 
-  // 2. OpenRouter Multi-Turn Streaming Gateway
+  // 2. OpenRouter Gateway
   if (provider === 'openrouter') {
     return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
   }
