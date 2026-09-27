@@ -1,17 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Sliders, AlertCircle, CheckCircle, Trash2 } from 'lucide-react';
+import { X, Save, Sliders, AlertCircle, CheckCircle, Globe, Mic } from 'lucide-react';
 
 export default function SettingsModal({
   isOpen,
-  isFirstRun = false,
   onClose,
   currentSettings,
-  onClearMemory,
   onSave
 }) {
   const [formData, setFormData] = useState(currentSettings);
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [memoryCleared, setMemoryCleared] = useState(false);
 
   useEffect(() => {
     setFormData(currentSettings);
@@ -32,48 +29,37 @@ export default function SettingsModal({
     }, 800);
   };
 
-  const handleMemoryPurge = () => {
-    if (onClearMemory) onClearMemory();
-    setMemoryCleared(true);
-    setTimeout(() => setMemoryCleared(false), 2000);
-  };
-
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-2xl flex items-center justify-center p-4">
-      <div className="w-full max-w-2xl bg-[#060a1a] border border-purple-500/50 rounded-3xl shadow-[0_0_70px_rgba(147,51,234,0.35)] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4">
+      {/* Modal Container with Amber / Orange Cyberpunk Glow */}
+      <div className="w-full max-w-2xl bg-[#0d0f17] border border-[#ff7700]/50 rounded-3xl shadow-[0_0_60px_rgba(255,119,0,0.25)] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-[#0a1028]">
-          <div className="flex items-center space-x-2.5 text-purple-400">
-            <Sliders className="w-5 h-5" />
-            <h2 className="font-mono font-bold text-sm tracking-widest uppercase">
-              {isFirstRun ? 'NOVA AI // INITIAL SETUP' : 'NOVA AI // SYSTEM CONFIGURATION'}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#ff7700]/20 bg-[#121622]">
+          <div className="flex items-center space-x-2.5 text-[#ff9900]">
+            <Sliders className="w-5 h-5 text-[#ff8800]" />
+            <h2 className="font-mono font-bold text-sm tracking-widest uppercase text-white">
+              NOVA AI // SYSTEM CONFIGURATION
             </h2>
           </div>
-          {!isFirstRun && (
-            <button onClick={onClose} className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition">
-              <X className="w-5 h-5" />
-            </button>
-          )}
+          <button
+            onClick={onClose}
+            className="p-1 rounded-xl text-slate-400 hover:text-[#ff9900] hover:bg-[#1a1f30] transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {isFirstRun && (
-          <div className="px-6 py-3 bg-purple-950/40 border-b border-purple-500/30 flex items-center space-x-3 text-purple-300 text-xs font-mono">
-            <AlertCircle className="w-4 h-4 text-purple-400 shrink-0" />
-            <span>Welcome Sir! Enter your Gemini API key below. Settings persist across all reboots.</span>
-          </div>
-        )}
-
         <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
-          {/* Provider Selection */}
+          {/* Provider Selection Tabs */}
           <div>
-            <label className="text-xs font-mono uppercase text-slate-400 block mb-2 font-semibold tracking-wider">
+            <label className="text-xs font-mono uppercase text-[#ffaa00] block mb-2 font-semibold tracking-wider">
               Primary Cognitive Gateway
             </label>
             <div className="grid grid-cols-3 gap-3">
               {[
                 { id: 'gemini', label: 'Google Gemini' },
-                { id: 'openrouter', label: 'OpenRouter (Multi-Model)' },
-                { id: 'custom', label: 'Groq / Custom API' }
+                { id: 'openrouter', label: 'OpenRouter' },
+                { id: 'custom', label: 'Custom / Groq' }
               ].map((prov) => (
                 <button
                   key={prov.id}
@@ -81,8 +67,8 @@ export default function SettingsModal({
                   onClick={() => handleChange('provider', prov.id)}
                   className={`py-3 px-3 rounded-2xl border text-xs font-mono uppercase tracking-wider transition ${
                     formData.provider === prov.id
-                      ? 'border-purple-400 bg-purple-600/25 text-purple-200 shadow-[0_0_20px_rgba(168,85,247,0.35)] font-bold'
-                      : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700'
+                      ? 'border-[#ff7700] bg-[#ff7700]/20 text-[#ffaa00] shadow-[0_0_20px_rgba(255,119,0,0.3)] font-bold'
+                      : 'border-slate-800 bg-[#121522] text-slate-400 hover:border-slate-700'
                   }`}
                 >
                   {prov.label}
@@ -93,7 +79,7 @@ export default function SettingsModal({
 
           {/* 1. Google Gemini Config */}
           {formData.provider === 'gemini' && (
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-4">
+            <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4">
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
                   Google Gemini API Key
@@ -103,7 +89,7 @@ export default function SettingsModal({
                   value={formData.geminiKey || ''}
                   onChange={(e) => handleChange('geminiKey', e.target.value)}
                   placeholder="AIzaSy..."
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-[#ffaa00] focus:outline-none focus:border-[#ff7700] font-mono"
                 />
               </div>
 
@@ -116,8 +102,8 @@ export default function SettingsModal({
                   type="text"
                   value={formData.geminiModel || 'gemini-2.5-flash'}
                   onChange={(e) => handleChange('geminiModel', e.target.value)}
-                  placeholder="gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-pro"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                  placeholder="gemini-2.5-flash, gemini-2.0-flash"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
                 />
                 <datalist id="gemini-models">
                   <option value="gemini-2.5-flash" />
@@ -126,25 +112,12 @@ export default function SettingsModal({
                   <option value="gemini-1.5-flash" />
                 </datalist>
               </div>
-
-              <div className="pt-2 border-t border-slate-800/80">
-                <label className="text-xs font-mono uppercase text-purple-300 block mb-1">
-                  Backup OpenRouter Key (Failover on Rate-Limit)
-                </label>
-                <input
-                  type="password"
-                  value={formData.openrouterKey || ''}
-                  onChange={(e) => handleChange('openrouterKey', e.target.value)}
-                  placeholder="sk-or-v1-..."
-                  className="w-full px-3.5 py-2 bg-slate-900/80 border border-slate-800 rounded-xl text-xs text-purple-300 focus:outline-none focus:border-purple-400 font-mono"
-                />
-              </div>
             </div>
           )}
 
           {/* 2. OpenRouter Config */}
           {formData.provider === 'openrouter' && (
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-4 shadow-[0_0_20px_rgba(168,85,247,0.15)]">
+            <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4 shadow-[0_0_20px_rgba(255,119,0,0.15)]">
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
                   OpenRouter API Key
@@ -154,7 +127,7 @@ export default function SettingsModal({
                   value={formData.openrouterKey || ''}
                   onChange={(e) => handleChange('openrouterKey', e.target.value)}
                   placeholder="sk-or-v1-..."
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-purple-300 focus:outline-none focus:border-purple-400 font-mono"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-[#ffaa00] focus:outline-none focus:border-[#ff7700] font-mono"
                 />
               </div>
 
@@ -167,15 +140,12 @@ export default function SettingsModal({
                   type="text"
                   value={formData.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free'}
                   onChange={(e) => handleChange('openrouterModel', e.target.value)}
-                  placeholder="e.g. meta-llama/llama-3.3-70b-instruct:free"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-purple-400 font-mono"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
                 />
                 <datalist id="openrouter-models">
                   <option value="meta-llama/llama-3.3-70b-instruct:free" />
                   <option value="deepseek/deepseek-r1:free" />
                   <option value="qwen/qwen-2.5-72b-instruct:free" />
-                  <option value="anthropic/claude-3.5-sonnet" />
-                  <option value="openai/gpt-4o" />
                 </datalist>
               </div>
             </div>
@@ -183,15 +153,14 @@ export default function SettingsModal({
 
           {/* 3. Custom API Gateway */}
           {formData.provider === 'custom' && (
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
+            <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4">
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Base Endpoint URL</label>
                 <input
                   type="text"
                   value={formData.customBaseURL || 'https://api.groq.com/openai/v1'}
                   onChange={(e) => handleChange('customBaseURL', e.target.value)}
-                  placeholder="https://api.groq.com/openai/v1"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-[#ffaa00] focus:outline-none focus:border-[#ff7700] font-mono"
                 />
               </div>
               <div>
@@ -200,59 +169,46 @@ export default function SettingsModal({
                   type="password"
                   value={formData.customKey || ''}
                   onChange={(e) => handleChange('customKey', e.target.value)}
-                  placeholder="gsk_... or custom token"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Model Name</label>
-                <input
-                  type="text"
-                  value={formData.customModel || 'llama-3.3-70b-versatile'}
-                  onChange={(e) => handleChange('customModel', e.target.value)}
-                  placeholder="llama-3.3-70b-versatile"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
                 />
               </div>
             </div>
           )}
 
-          {/* Memory Management */}
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
-            <div className="flex flex-col space-y-0.5">
-              <span className="text-xs font-mono font-bold text-slate-300 uppercase">Conversational Memory</span>
-              <span className="text-[11px] text-slate-500 font-mono">
-                NOVA remembers the last 20 conversation turns. Reset to start fresh.
-              </span>
+          {/* Voice Language Selection (Urdu / Hindi Defaulted) */}
+          <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-3">
+            <div className="flex items-center space-x-2 text-[#ff9900]">
+              <Mic className="w-4 h-4 text-[#ff8800]" />
+              <label className="text-xs font-mono uppercase text-slate-200 font-bold">
+                Default Voice & Language (اردو / Hindi)
+              </label>
             </div>
-            <button
-              type="button"
-              onClick={handleMemoryPurge}
-              className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl border text-xs font-mono uppercase font-bold transition ${
-                memoryCleared
-                  ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
-                  : 'border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20'
-              }`}
+            <select
+              value={formData.voice || 'ur-PK'}
+              onChange={(e) => handleChange('voice', e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-[#ff7700] font-mono"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>{memoryCleared ? 'Purged!' : 'Clear Memory'}</span>
-            </button>
+              <option value="ur-PK">Urdu Pakistan (اردو - ترجیحی آواز)</option>
+              <option value="hi-IN">Hindi India (हिंदी / اردو نیچرل)</option>
+              <option value="en-US">English Natural (US)</option>
+            </select>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end items-center px-6 py-4 bg-[#0a1028] border-t border-slate-800 space-x-3">
-          {!isFirstRun && (
-            <button onClick={onClose} className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white transition">
-              Cancel
-            </button>
-          )}
+        <div className="flex justify-end items-center px-6 py-4 bg-[#121622] border-t border-[#ff7700]/20 space-x-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white transition"
+          >
+            Cancel
+          </button>
           <button
             onClick={handleSave}
-            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(168,85,247,0.4)]"
+            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#ff7700] to-[#ff9900] hover:brightness-110 text-black font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(255,119,0,0.4)]"
           >
-            {savedSuccess ? <CheckCircle className="w-4 h-4 text-emerald-300" /> : <Save className="w-4 h-4" />}
-            <span>{savedSuccess ? 'Saved Permanently!' : 'Save Changes'}</span>
+            {savedSuccess ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            <span>{savedSuccess ? 'Saved!' : 'Save & Persist'}</span>
           </button>
         </div>
       </div>
