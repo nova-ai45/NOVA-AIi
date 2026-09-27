@@ -3,17 +3,28 @@ const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA, an advanced Neural Operating Voice Assistant equipped with always-on background screen vision and full Windows OS automation.
+You are NOVA, an advanced Neural Operating Voice Assistant equipped with always-on background screen vision, direct desktop code typing streaming, and Windows OS automation.
 
-CORE EXECUTION DIRECTIVE:
+CORE DIRECTIVE:
 1. Return responses strictly in JSON schema.
-2. Keep spoken responses concise, natural, polite, and executive.
+2. Provide spoken responses that are polite, crisp, and executive.
 3. Automatically observe the provided desktop screen context and fulfill user intentions end-to-end.
+4. When writing code, scripts, or project files, prefer "CREATE_AND_STREAM_CODE" so the user visually sees the typing in real time.
 
 JSON Output Schema:
 {
-  "spokenResponse": "Sir, I have analyzed your screen and performed the requested actions.",
+  "spokenResponse": "Sir, I have started visual code streaming for index.html and launched the project.",
   "actions": [
+    {
+      "type": "CREATE_AND_STREAM_CODE",
+      "payload": {
+        "directoryName": "NovaProject",
+        "filename": "index.html",
+        "content": "<!DOCTYPE html><html><head><title>NOVA App</title></head><body><h1>NOVA Online</h1></body></html>",
+        "executeImmediately": true,
+        "openVisualNotepad": true
+      }
+    },
     {
       "type": "OPEN_BROWSER_AND_PLAY",
       "payload": {
@@ -21,39 +32,29 @@ JSON Output Schema:
         "query": "The Hasnain Gaming",
         "autoplay": true
       }
-    },
-    {
-      "type": "CREATE_AND_RUN_PROJECT",
-      "payload": {
-        "directoryName": "NovaAutomation",
-        "filename": "script.py",
-        "content": "print('Task Executed')",
-        "executeImmediately": true
-      }
     }
   ]
 }
 
 Available Action Types:
+- CREATE_AND_STREAM_CODE: { directoryName, filename, content, executeImmediately, openVisualNotepad }
 - OPEN_BROWSER_AND_PLAY: { url, query, autoplay }
-- CREATE_AND_RUN_PROJECT: { directoryName, filename, content, executeImmediately }
 - OPEN_APP: { name } (e.g. notepad, calc, chrome, code, explorer)
 - RUN_COMMAND: { cmd }
 `;
 
 /**
- * Primary Engine 1: Google Gemini 2.0 Flash
+ * Primary Engine: Google Gemini (Supports 2.0 Flash / 1.5 Pro)
  */
 async function queryGemini(userPrompt, audioBase64, imageBase64, config) {
   if (!config.geminiKey) {
-    throw new Error('Gemini API key is not configured.');
+    throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
   }
 
   const genAI = new GoogleGenerativeAI(config.geminiKey);
   const modelName = config.geminiModel || 'gemini-2.0-flash';
 
   const parts = [];
-
   if (audioBase64) {
     parts.push({
       inlineData: {
@@ -62,7 +63,6 @@ async function queryGemini(userPrompt, audioBase64, imageBase64, config) {
       }
     });
   }
-
   if (imageBase64) {
     parts.push({
       inlineData: {
@@ -71,7 +71,6 @@ async function queryGemini(userPrompt, audioBase64, imageBase64, config) {
       }
     });
   }
-
   if (userPrompt) parts.push(userPrompt);
 
   const model = genAI.getGenerativeModel({
@@ -85,20 +84,19 @@ async function queryGemini(userPrompt, audioBase64, imageBase64, config) {
 }
 
 /**
- * Fail-Safe Engine 2: OpenRouter Free Models
+ * Universal Multi-Model Engine: OpenRouter
  */
 async function queryOpenRouter(userPrompt, imageBase64, config) {
-  const apiKey = config.openrouterKey;
-  if (!apiKey) {
-    throw new Error('OpenRouter API key is not configured.');
+  if (!config.openrouterKey) {
+    throw new Error('OpenRouter API key is missing. Please enter it in Settings.');
   }
 
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: apiKey,
+    apiKey: config.openrouterKey,
     defaultHeaders: {
       'HTTP-Referer': 'https://nova-ai.desktop',
-      'X-Title': 'NOVA AI Desktop Assistant'
+      'X-Title': 'NOVA AI Neural Assistant'
     }
   });
 
@@ -107,14 +105,12 @@ async function queryOpenRouter(userPrompt, imageBase64, config) {
   const content = [];
 
   if (userPrompt) content.push({ type: 'text', text: userPrompt });
-
   if (imageBase64) {
     content.push({
       type: 'image_url',
       image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
     });
   }
-
   messages.push({ role: 'user', content });
 
   const completion = await client.chat.completions.create({
@@ -127,19 +123,13 @@ async function queryOpenRouter(userPrompt, imageBase64, config) {
 }
 
 /**
- * Fail-Safe Engine 3: Groq / Custom API Gateway
+ * Custom / Local Gateway (e.g. Groq, Ollama)
  */
-async function queryGroqOrCustom(userPrompt, imageBase64, config) {
+async function queryCustom(userPrompt, imageBase64, config) {
   const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
-  const apiKey = config.customKey;
-
-  if (!apiKey) {
-    throw new Error('Groq or Custom API key is not configured.');
-  }
-
   const client = new OpenAI({
     baseURL,
-    apiKey
+    apiKey: config.customKey || 'dummy'
   });
 
   const messages = [
@@ -157,58 +147,49 @@ async function queryGroqOrCustom(userPrompt, imageBase64, config) {
 }
 
 /**
- * Multi-Provider AI Inference Router with Silent Fallback Chain:
- * Gemini 2.0 -> OpenRouter -> Groq / Custom
+ * Multi-Model Failover Inference Router
  */
 async function runAIInference(userPrompt, audioBase64, manualImageBase64, config) {
-  // Always attach latest continuous vision screen context automatically
   const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
   const provider = config.provider || 'gemini';
 
-  // 1. If user explicitly chooses OpenRouter
   if (provider === 'openrouter') {
     try {
       return await queryOpenRouter(userPrompt, imageBase64, config);
     } catch (err) {
-      if (config.geminiKey) {
-        return await queryGemini(userPrompt, audioBase64, imageBase64, config);
-      }
+      if (config.geminiKey) return await queryGemini(userPrompt, audioBase64, imageBase64, config);
       throw err;
     }
   }
 
-  // 2. Default: Attempt Gemini 2.0 Flash first
   if (provider === 'gemini') {
     try {
       return await queryGemini(userPrompt, audioBase64, imageBase64, config);
     } catch (err) {
-      const isQuotaOrLimit =
+      const isQuotaError =
         err.message.includes('429') ||
         err.message.includes('quota') ||
         err.message.includes('ResourceExhausted') ||
-        err.message.includes('503') ||
-        err.message.includes('overloaded');
+        err.message.includes('503');
 
-      // Fail-Safe Chain Step 2: Auto-switch to OpenRouter
-      if (isQuotaOrLimit && config.openrouterKey) {
+      // Fail-Safe Chain Step 2: Auto switch to OpenRouter
+      if (isQuotaError && config.openrouterKey) {
         try {
           return await queryOpenRouter(userPrompt, imageBase64, config);
         } catch (_) {}
       }
 
-      // Fail-Safe Chain Step 3: Auto-switch to Groq / Custom
-      if (isQuotaOrLimit && config.customKey) {
+      // Fail-Safe Chain Step 3: Auto switch to Groq / Custom
+      if (isQuotaError && config.customKey) {
         try {
-          return await queryGroqOrCustom(userPrompt, imageBase64, config);
+          return await queryCustom(userPrompt, imageBase64, config);
         } catch (_) {}
       }
-
       throw err;
     }
   }
 
-  // 3. Custom Gateway
-  return await queryGroqOrCustom(userPrompt, imageBase64, config);
+  return await queryCustom(userPrompt, imageBase64, config);
 }
 
 module.exports = {
