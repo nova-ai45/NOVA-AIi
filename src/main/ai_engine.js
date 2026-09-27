@@ -3,17 +3,17 @@ const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA, an ultra-low latency JARVIS-like Neural Voice Assistant equipped with desktop screen perception and direct Windows OS automation.
+You are NOVA, an advanced Neural Operating Voice Assistant equipped with continuous conversational memory context, real-time desktop vision, and direct Windows OS automation.
 
 CORE DIRECTIVE:
-1. Return responses strictly in JSON schema.
-2. Provide spoken responses that are polite, crisp, and executive.
-3. Automatically observe the provided desktop screen context and fulfill user intentions end-to-end.
-4. When writing code, scripts, or project files, prefer "CREATE_AND_STREAM_CODE" so the user visually sees the typing in real time.
+1. Maintain memory and conversational awareness across previous chat turns.
+2. Return responses strictly in JSON schema.
+3. Keep spoken responses polite, crisp, and executive.
+4. When writing code or project files, prefer "CREATE_AND_STREAM_CODE" so the user visually sees the typing in real time.
 
 JSON Output Schema:
 {
-  "spokenResponse": "Sir, I have started visual code streaming for index.html and launched the project.",
+  "spokenResponse": "Sir, I remember your request and have proceeded with the task.",
   "actions": [
     {
       "type": "CREATE_AND_STREAM_CODE",
@@ -44,20 +44,21 @@ Available Action Types:
 `;
 
 /**
- * Ultra-fast Streaming Inference Router with First-Sentence TTS dispatch
+ * Ultra-fast Streaming Inference Router with Multi-Turn Memory Management
  */
 async function runAIInferenceStream(
   userPrompt,
   audioBase64,
   manualImageBase64,
   config,
+  conversationHistory = [],
   onChunkCallback = () => {},
   onEarlySentenceCallback = () => {}
 ) {
   const imageBase64 = manualImageBase64 || (await getLatestScreenContext());
   const provider = config.provider || 'gemini';
 
-  // 1. Google Gemini 2.5 / 2.0 Flash Streaming Engine
+  // 1. Google Gemini 2.5 / 2.0 / 3.7 Flash Multi-Turn Engine
   if (provider === 'gemini') {
     if (!config.geminiKey) {
       throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
@@ -66,9 +67,23 @@ async function runAIInferenceStream(
     const genAI = new GoogleGenerativeAI(config.geminiKey);
     const modelName = config.geminiModel || 'gemini-2.5-flash';
 
-    const parts = [];
+    // Format conversation history for Gemini (maintaining last 20 turns)
+    const formattedContents = [];
+    const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+
+    memorySlice.forEach((turn) => {
+      if (turn.role && turn.text) {
+        formattedContents.push({
+          role: turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: turn.text }]
+        });
+      }
+    });
+
+    // Construct current prompt parts
+    const currentParts = [];
     if (audioBase64) {
-      parts.push({
+      currentParts.push({
         inlineData: {
           mimeType: 'audio/webm',
           data: audioBase64
@@ -76,14 +91,21 @@ async function runAIInferenceStream(
       });
     }
     if (imageBase64) {
-      parts.push({
+      currentParts.push({
         inlineData: {
           mimeType: 'image/jpeg',
           data: imageBase64
         }
       });
     }
-    if (userPrompt) parts.push(userPrompt);
+    if (userPrompt) {
+      currentParts.push({ text: userPrompt });
+    }
+
+    formattedContents.push({
+      role: 'user',
+      parts: currentParts
+    });
 
     const model = genAI.getGenerativeModel({
       model: modelName,
@@ -92,7 +114,7 @@ async function runAIInferenceStream(
     });
 
     try {
-      const responseStream = await model.generateContentStream(parts);
+      const responseStream = await model.generateContentStream({ contents: formattedContents });
       let fullText = '';
       let earlySentenceFired = false;
 
@@ -101,7 +123,6 @@ async function runAIInferenceStream(
         fullText += chunkText;
         onChunkCallback(chunkText);
 
-        // Extract first spoken sentence for immediate verbal reply
         if (!earlySentenceFired) {
           const match = fullText.match(/"spokenResponse"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/);
           if (match && match[1]) {
@@ -122,24 +143,23 @@ async function runAIInferenceStream(
         err.message.includes('ResourceExhausted') ||
         err.message.includes('503');
 
-      // Failover to OpenRouter on quota limit
       if (isQuotaError && config.openrouterKey) {
-        return await queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCallback);
+        return await queryOpenRouterStream(userPrompt, imageBase64, config, memorySlice, onChunkCallback);
       }
       throw err;
     }
   }
 
-  // 2. OpenRouter Streaming Gateway
+  // 2. OpenRouter Multi-Turn Streaming Gateway
   if (provider === 'openrouter') {
-    return await queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCallback);
+    return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
   }
 
   // 3. Custom / Groq Endpoint
-  return await queryCustomStream(userPrompt, imageBase64, config, onChunkCallback);
+  return await queryCustomStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
 }
 
-async function queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCallback = () => {}) {
+async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
   if (!config.openrouterKey) {
     throw new Error('OpenRouter API key is missing. Please enter it in Settings.');
   }
@@ -155,16 +175,24 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCal
 
   const selectedModel = config.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free';
   const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
-  const content = [];
 
-  if (userPrompt) content.push({ type: 'text', text: userPrompt });
+  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+  memorySlice.forEach((turn) => {
+    messages.push({
+      role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
+      content: turn.text || ''
+    });
+  });
+
+  const currentContent = [];
+  if (userPrompt) currentContent.push({ type: 'text', text: userPrompt });
   if (imageBase64) {
-    content.push({
+    currentContent.push({
       type: 'image_url',
       image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
     });
   }
-  messages.push({ role: 'user', content });
+  messages.push({ role: 'user', content: currentContent });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
@@ -183,17 +211,23 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, onChunkCal
   return JSON.parse(fullText);
 }
 
-async function queryCustomStream(userPrompt, imageBase64, config, onChunkCallback = () => {}) {
+async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
   const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
   const client = new OpenAI({
     baseURL,
     apiKey: config.customKey || 'dummy'
   });
 
-  const messages = [
-    { role: 'system', content: SYSTEM_INSTRUCTION },
-    { role: 'user', content: userPrompt || 'Analyze context and execute instructions.' }
-  ];
+  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
+  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-20) : [];
+  memorySlice.forEach((turn) => {
+    messages.push({
+      role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
+      content: turn.text || ''
+    });
+  });
+
+  messages.push({ role: 'user', content: userPrompt || 'Analyze context and execute instructions.' });
 
   const stream = await client.chat.completions.create({
     model: config.customModel || 'llama-3.3-70b-versatile',
