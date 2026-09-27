@@ -40,7 +40,6 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 
 let mainWindow = null;
 
-// ڈیفالٹ سیٹنگز میں اردو زبان کو اولین ترجیح دی گئی ہے
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
@@ -50,7 +49,7 @@ const DEFAULT_SETTINGS = {
   customBaseURL: 'https://api.groq.com/openai/v1',
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
-  voice: 'ur-PK', // اردو پاکستان
+  voice: 'female-ur-hi',
   autoSpeak: true,
   autoVision: true,
   autoFailover: true
@@ -223,7 +222,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // AI Pipeline Handler
+  // AI Pipeline Execution Handler
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
     try {
@@ -234,7 +233,8 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      if (text) broadcastLog('command', `User Directive: "${text}"`);
+      if (text) broadcastLog('command', `Directive: "${text}"`);
+      else if (audioBase64) broadcastLog('command', 'Audio Command -> Dispatched to Gemini');
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
@@ -253,7 +253,7 @@ app.whenReady().then(() => {
         }
       );
 
-      // Execute OS Automation
+      // Execute physical mouse clicks, scrolls, browser and files
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
