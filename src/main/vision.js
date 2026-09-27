@@ -4,8 +4,7 @@ let cachedScreenBase64 = null;
 let isCaptureInProgress = false;
 
 /**
- * Captures primary display frame safely on-demand.
- * Must only be called AFTER app.whenReady().
+ * Captures primary display frame in 1920x1080 for pinpoint coordinate accuracy.
  */
 async function captureActiveDisplay() {
   if (isCaptureInProgress) return cachedScreenBase64;
@@ -14,13 +13,13 @@ async function captureActiveDisplay() {
   try {
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: 1280, height: 720 },
+      thumbnailSize: { width: 1920, height: 1080 },
       fetchWindowIcons: false
     });
 
     if (sources && sources.length > 0) {
       const primary = sources[0];
-      const jpegBuffer = primary.thumbnail.toJPEG(75);
+      const jpegBuffer = primary.thumbnail.toJPEG(80);
       cachedScreenBase64 = jpegBuffer.toString('base64');
     }
   } catch (error) {
