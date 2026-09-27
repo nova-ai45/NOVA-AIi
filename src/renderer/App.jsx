@@ -46,14 +46,17 @@ export default function App() {
   const [currentDate, setCurrentDate] = useState('');
   const [sysMetrics, setSysMetrics] = useState({ cpu: 12, ram: 44, disk: 31 });
 
-  // Real-time voice engine references & 1.0s silence timer
-  const recognitionRef = useRef(null);
+  // Voice Activity Detection (VAD) & Silence State Refs
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const mediaStreamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
   const silenceTimerRef = useRef(null);
-  const accumulatedSpeechRef = useRef('');
-  const isSpeechRunningRef = useRef(false);
+  const isSpeakingDetectedRef = useRef(false);
   const isProcessingRef = useRef(false);
-  const executionTokenRef = useRef(0);
   const canvasBgRef = useRef(null);
+  const animFrameRef = useRef(null);
 
   useEffect(() => {
     try {
@@ -115,10 +118,6 @@ export default function App() {
       }
     });
 
-    const unsubHotkey = window.novaAPI.onHotkeyTrigger ? window.novaAPI.onHotkeyTrigger(() => {
-      handleGlobalPushToTalkToggle();
-    }) : () => {};
-
     if (window.novaAPI.onAiStreamChunk) {
       window.novaAPI.onAiStreamChunk((chunk) => {
         setStatusMessage(`Streaming: ${chunk.slice(0, 35)}...`);
@@ -127,7 +126,7 @@ export default function App() {
 
     if (window.novaAPI.onSystemShutdown) {
       window.novaAPI.onSystemShutdown(() => {
-        destroySpeechRecognition();
+        stopAudioVAD();
         cancelNativeSpeech();
       });
     }
@@ -137,7 +136,7 @@ export default function App() {
     }, 4500);
 
     initBackgroundCanvasShader();
-    initSpeechRecognitionEngine();
+    initHandsFreeVAD();
 
     return () => {
       clearInterval(clockInterval);
@@ -145,35 +144,11 @@ export default function App() {
       clearTimeout(greetingTimer);
       unsubLog();
       unsubState();
-      unsubHotkey();
-      destroySpeechRecognition();
+      stopAudioVAD();
       cancelNativeSpeech();
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
-
-  // Global Push-to-Talk Hotkey Toggle
-  const handleGlobalPushToTalkToggle = () => {
-    if (isProcessingRef.current) return;
-
-    if (isSpeechRunningRef.current) {
-      // Hotkey pressed again -> finalize and submit accumulated speech
-      const speech = accumulatedSpeechRef.current.trim();
-      accumulatedSpeechRef.current = '';
-      stopSpeechRecognition();
-      if (speech.length > 0) {
-        handleExecute(speech);
-      } else {
-        setSphereState('idle');
-        setStatusMessage('Listening...');
-      }
-    } else {
-      accumulatedSpeechRef.current = '';
-      cancelNativeSpeech();
-      startSpeechRecognition();
-      setSphereState('listening');
-      setStatusMessage(`NOVA: Listening [${settings.globalHotkey || 'Alt+Space'}]...`);
-    }
-  };
 
   const handleClearMemory = () => {
     setChatHistory([]);
@@ -255,110 +230,137 @@ export default function App() {
     };
   };
 
-  // Real-Time Speech Recognition Engine with 1.0-Second Silence Auto-Submit
-  const initSpeechRecognitionEngine = () => {
-    const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechConstructor) return;
-
+  // 100% Hands-Free Voice Detection: خاموش ہوتے ہی خودکار تھنکنگ
+  const initHandsFreeVAD = async () => {
     try {
-      const recognition = new SpeechConstructor();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
+      if (mediaStreamRef.current) return;
 
-      recognition.onstart = () => {
-        isSpeechRunningRef.current = true;
-        if (!isProcessingRef.current) {
-          setSphereState('listening');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
-      };
+      });
+      mediaStreamRef.current = stream;
 
-      recognition.onresult = (event) => {
-        if (isProcessingRef.current) return;
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioCtx();
+      audioContextRef.current = audioCtx;
 
-        let liveText = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const item = event.results[i];
-          if (item[0] && item[0].transcript) {
-            liveText += item[0].transcript;
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyserRef.current = analyser;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const VOICE_THRESHOLD = 20; // انسانی آواز کی حساسیت
+      const SILENCE_TIMEOUT_MS = 1200; // خاموش ہونے کی حد (1.2 سیکنڈ)
+
+      const vadCheckLoop = () => {
+        // جب نووا خود بول رہی ہو یا پروسیس کر رہی ہو تو مائیک کو پاز رکھیں
+        if (isProcessingRef.current || sphereState === 'speaking') {
+          animFrameRef.current = requestAnimationFrame(vadCheckLoop);
+          return;
+        }
+
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / bufferLength;
+        setAudioLevel(Math.min(1.0, Math.max(0.18, average / 65)));
+
+        if (average > VOICE_THRESHOLD) {
+          // صارف نے بولنا شروع کر دیا
+          if (!isSpeakingDetectedRef.current) {
+            isSpeakingDetectedRef.current = true;
+            setSphereState('listening');
+            setStatusMessage('Hearing you speak...');
+            startRecordingBuffer(stream);
           }
-        }
 
-        const trimmed = liveText.trim();
-        if (trimmed.length > 0) {
-          accumulatedSpeechRef.current = trimmed;
-          setSphereState('listening');
-          setStatusMessage(`"${trimmed}"`);
-
+          // اگر بولتے ہوئے خاموشی کا ٹائمر چل رہا تھا تو اسے کینسل کر دیں
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
           }
-
-          // Automated 1.0-second silence timer: auto-submit query to AI
-          silenceTimerRef.current = setTimeout(() => {
-            const finalSpeech = accumulatedSpeechRef.current.trim();
-            if (finalSpeech.length > 0 && !isProcessingRef.current) {
-              accumulatedSpeechRef.current = '';
-              stopSpeechRecognition();
-              handleExecute(finalSpeech);
-            }
-          }, 1000);
+        } else {
+          // آواز رک گئی ہے (خاموشی ہے)
+          if (isSpeakingDetectedRef.current && !silenceTimerRef.current) {
+            silenceTimerRef.current = setTimeout(() => {
+              // 1.2 سیکنڈ خاموشی مکمل! اب تھنکنگ میں جائیں اور AI کو بھیجیں
+              isSpeakingDetectedRef.current = false;
+              silenceTimerRef.current = null;
+              finishRecordingAndSubmit();
+            }, SILENCE_TIMEOUT_MS);
+          }
         }
+
+        animFrameRef.current = requestAnimationFrame(vadCheckLoop);
       };
 
-      recognition.onerror = (e) => {
-        if (e.error !== 'no-speech') {
-          console.warn('Speech engine:', e.error);
-        }
-      };
-
-      recognition.onend = () => {
-        isSpeechRunningRef.current = false;
-        if (!isProcessingRef.current) {
-          setTimeout(() => {
-            startSpeechRecognition();
-          }, 200);
-        }
-      };
-
-      recognitionRef.current = recognition;
-      startSpeechRecognition();
+      vadCheckLoop();
     } catch (err) {
-      console.error('Speech initialization error:', err);
+      console.error('Microphone VAD initialization error:', err);
     }
   };
 
-  const startSpeechRecognition = () => {
-    if (recognitionRef.current && !isSpeechRunningRef.current && !isProcessingRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (_) {}
+  const startRecordingBuffer = (stream) => {
+    try {
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.start(100);
+      mediaRecorderRef.current = recorder;
+    } catch (_) {}
+  };
+
+  const finishRecordingAndSubmit = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (audioBlob.size > 8000) {
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = () => {
+            const base64Audio = reader.result.split(',')[1];
+            handleExecute(null, base64Audio);
+          };
+        } else {
+          setSphereState('idle');
+          setStatusMessage('Listening...');
+        }
+      };
+      mediaRecorderRef.current.stop();
+    } else {
+      setSphereState('idle');
+      setStatusMessage('Listening...');
     }
   };
 
-  const stopSpeechRecognition = () => {
+  const stopAudioVAD = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
-    if (recognitionRef.current && isSpeechRunningRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (_) {}
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
     }
   };
 
-  const destroySpeechRecognition = () => {
-    stopSpeechRecognition();
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (_) {}
-      recognitionRef.current = null;
-    }
-  };
-
-  // Native Web Speech Synthesis (0ms Latency, zero socket/network errors)
+  // آواز سے بولنے کا مستند سسٹم (Native Web Speech Synthesis)
   const cancelNativeSpeech = () => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -372,67 +374,60 @@ export default function App() {
       isProcessingRef.current = false;
       setSphereState('idle');
       setStatusMessage('Listening...');
-      startSpeechRecognition();
       return;
     }
 
     setSphereState('speaking');
     setStatusMessage('NOVA is speaking...');
 
+    // ونڈوز آڈیو بلاک ختم کرنے کے لیے ریزیوم
+    window.speechSynthesis.resume();
+
     const utterance = new SpeechSynthesisUtterance(text);
+    // گاربیج کلیکشن بگ سے بچاؤ
+    window._activeUtterance = utterance;
+
     utterance.rate = 1.05;
     utterance.pitch = 1.0;
 
     const voices = window.speechSynthesis.getVoices();
-    if (voices.length > 0) {
-      const selectedVoice = voices.find(
+    if (voices && voices.length > 0) {
+      const selected = voices.find(
         (v) =>
+          v.lang.includes('ur') ||
+          v.lang.includes('hi') ||
           v.name.includes('Aria') ||
-          v.name.includes('Jenny') ||
           v.name.includes('Natural') ||
-          v.name.includes('Google US English') ||
           v.lang.startsWith('en')
       );
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-      }
+      if (selected) utterance.voice = selected;
     }
 
-    let pulseInterval = setInterval(() => {
+    let pulseTimer = setInterval(() => {
       setAudioLevel(0.35 + Math.random() * 0.45);
     }, 120);
 
-    utterance.onend = () => {
-      clearInterval(pulseInterval);
+    const finishVoice = () => {
+      clearInterval(pulseTimer);
       setAudioLevel(0.18);
+      window._activeUtterance = null;
       isProcessingRef.current = false;
       setSphereState('idle');
       setStatusMessage('Listening...');
-      startSpeechRecognition();
     };
 
-    utterance.onerror = () => {
-      clearInterval(pulseInterval);
-      setAudioLevel(0.18);
-      isProcessingRef.current = false;
-      setSphereState('idle');
-      setStatusMessage('Listening...');
-      startSpeechRecognition();
-    };
+    utterance.onend = finishVoice;
+    utterance.onerror = finishVoice;
 
     window.speechSynthesis.speak(utterance);
   };
 
-  // Unified Execution Pipeline
-  const handleExecute = async (overridePrompt = null) => {
+  // AI کمانڈ پروسیسنگ (آڈیو اور ٹیکسٹ دونوں کے لیے یکساں)
+  const handleExecute = async (overridePrompt = null, audioPayload = null) => {
     const prompt = overridePrompt || inputText;
-    if (!prompt.trim()) return;
-
-    // Increment execution token to discard stale/delayed execution queues
-    const currentToken = ++executionTokenRef.current;
+    if (!prompt.trim() && !audioPayload) return;
 
     isProcessingRef.current = true;
-    stopSpeechRecognition();
     cancelNativeSpeech();
 
     setInputText('');
@@ -443,18 +438,15 @@ export default function App() {
 
     const result = await window.novaAPI.processCommand({
       text: prompt,
-      audioBase64: null,
+      audioBase64: audioPayload,
       conversationHistory: historySnapshot,
       includeVision: true
     });
 
-    // Discard result if a newer query took over
-    if (currentToken !== executionTokenRef.current) return;
-
     if (result && result.success) {
       setChatHistory((prev) => [
         ...prev,
-        { role: 'user', text: prompt },
+        { role: 'user', text: prompt || '[Voice Command]' },
         { role: 'model', text: result.spokenResponse || 'Action executed.' }
       ]);
 
@@ -464,13 +456,11 @@ export default function App() {
         isProcessingRef.current = false;
         setSphereState('idle');
         setStatusMessage('Listening...');
-        startSpeechRecognition();
       }
     } else {
       isProcessingRef.current = false;
       setSphereState('idle');
       setStatusMessage('Listening...');
-      startSpeechRecognition();
     }
   };
 
@@ -508,11 +498,11 @@ export default function App() {
         </nav>
 
         <div className="flex flex-col items-center space-y-1">
-          <div className="flex items-center space-x-1 px-2 py-1 rounded-full bg-slate-900/90 border border-emerald-500/30">
+          <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-slate-900/90 border border-emerald-500/30">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981] animate-ping" />
-            <span className="text-[9px] font-mono text-emerald-300 font-semibold truncate max-w-[50px]">{settings.globalHotkey || 'Alt+Space'}</span>
+            <span className="text-[9px] font-mono text-emerald-300 font-semibold">LIVE</span>
           </div>
-          <span className="text-[8px] text-slate-500 font-mono">Push-to-Talk</span>
+          <span className="text-[8px] text-slate-500 font-mono">Hands-Free</span>
         </div>
       </aside>
 
@@ -547,7 +537,7 @@ export default function App() {
                   <div className="text-sm font-bold tracking-wide">
                     Hello! I'm <span className="text-purple-400 font-extrabold">NOVA</span>
                   </div>
-                  <div className="text-xs text-slate-400">Speak naturally. 1.0s auto-submit active. Hotkey: [{settings.globalHotkey || 'Alt+Space'}]</div>
+                  <div className="text-xs text-slate-400">Speak naturally. Just pause for 1.2s and I will automatically execute.</div>
                 </div>
               </div>
             ) : (
@@ -601,7 +591,7 @@ export default function App() {
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder={`Speak, hit [${settings.globalHotkey || 'Alt+Space'}], or type your directive...`}
+                  placeholder="Just speak naturally in Urdu/English, or type directive here..."
                   className="flex-1 bg-transparent px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none font-sans"
                 />
 
@@ -691,7 +681,7 @@ export default function App() {
             <div className="flex-1 flex items-end justify-end">
               <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-500">
                 <span className="w-6 h-[1px] bg-slate-800" />
-                <span>NOVA v3.3 &bull; Real-Time VAD</span>
+                <span>NOVA v3.5 &bull; Hands-Free Autonomy</span>
               </div>
             </div>
           </aside>
