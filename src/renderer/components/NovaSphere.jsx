@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
+export default function NovaSphere({ state = 'idle', audioLevel = 0 }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -30,12 +30,12 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
         coreColor = '#ff9900';
         ringColor = 'rgba(255, 160, 0, 0.9)';
         glowColor = 'rgba(255, 140, 0, 0.6)';
-        speed = 0.035;
+        speed = 0.03;
       } else if (state === 'thinking') {
         coreColor = '#00f0ff';
         ringColor = 'rgba(0, 240, 255, 0.8)';
         glowColor = 'rgba(0, 240, 255, 0.5)';
-        speed = 0.06;
+        speed = 0.055;
       } else if (state === 'speaking') {
         coreColor = '#ffaa00';
         ringColor = 'rgba(255, 190, 0, 1)';
@@ -45,9 +45,9 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
 
       angle += speed;
 
-      // 1. Background Grid Lines
+      // 1. Background Grid Lines (Subtle)
       ctx.save();
-      ctx.strokeStyle = 'rgba(255, 120, 0, 0.08)';
+      ctx.strokeStyle = 'rgba(255, 120, 0, 0.06)';
       ctx.lineWidth = 1;
       for (let x = 40; x < width; x += 40) {
         ctx.beginPath();
@@ -68,8 +68,8 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
       ringRadii.forEach((radius, idx) => {
         ctx.save();
         ctx.beginPath();
-        // بولتے وقت دائرے ارتعاش کریں گے
-        const pulse = audioLevel > 0.25 ? Math.sin(Date.now() / 120 + idx) * (audioLevel * 8) : 0;
+        // جب اصل آواز آئے گی صرف تب رنگز میں ارتعاش آئے گا
+        const pulse = audioLevel > 0.15 ? Math.sin(Date.now() / 120 + idx) * (audioLevel * 6) : 0;
         ctx.arc(centerX, centerY, radius + pulse, 0, Math.PI * 2);
 
         if (idx === 1) {
@@ -77,7 +77,7 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
           ctx.strokeStyle = ringColor;
           ctx.lineWidth = 1.5;
         } else if (idx === 2) {
-          ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)';
+          ctx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
           ctx.lineWidth = 1.2;
         } else {
           ctx.strokeStyle = ringColor;
@@ -85,12 +85,12 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
         }
 
         ctx.shadowColor = glowColor;
-        ctx.shadowBlur = 15;
+        ctx.shadowBlur = 12;
         ctx.stroke();
         ctx.restore();
       });
 
-      // 3. Orbiting Nodes
+      // 3. Orbiting Nodes (Dots on rings)
       const orbitNodes = [
         { r: 65, spd: angle * 1.5, col: '#ffaa00' },
         { r: 88, spd: -angle * 1.2, col: '#00e5ff' },
@@ -104,38 +104,57 @@ export default function NovaSphere({ state = 'idle', audioLevel = 0.18 }) {
         ctx.arc(nx, ny, 3, 0, Math.PI * 2);
         ctx.fillStyle = node.col;
         ctx.shadowColor = node.col;
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 8;
         ctx.fill();
         ctx.restore();
       });
 
-      // 4. Horizontal Audio Equalizer Spectrum (طاقتور لائیو لہریں)
-      ctx.save();
-      // جب آواز آئے گی تو لہریں اوپر نیچے اونچی ناچیں گی
-      const waveAmplitude = audioLevel > 0.22 ? audioLevel * 85 : 8;
-      const barWidth = 3;
-      const spacing = (width - 80) / waveformPoints;
+      // 4. Horizontal Audio Waveform Spectrum
+      // اگر آواز نہ ہو (audioLevel < 0.06) تو لہریں بالکل ساکت اور سیدھی فلیٹ لائن رہیں گی!
+      const hasRealAudio = audioLevel > 0.06;
 
-      for (let i = 0; i < waveformPoints; i++) {
-        const x = 40 + i * spacing;
-        const distFromCenter = Math.abs(x - centerX);
+      if (!hasRealAudio) {
+        // خاموشی میں بالکل سیدھی، پرسکون اورینج بیس لائن
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 120, 0, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.shadowColor = 'rgba(255, 120, 0, 0.5)';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(40, centerY);
+        ctx.lineTo(centerX - 35, centerY);
+        ctx.moveTo(centerX + 35, centerY);
+        ctx.lineTo(width - 40, centerY);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        // جب آواز آئے گی تو لہریں اصل والیوم کے حساب سے ناچیں گی
+        ctx.save();
+        const waveAmplitude = audioLevel * 85;
+        const barWidth = 3;
+        const spacing = (width - 80) / waveformPoints;
 
-        if (distFromCenter < 35) continue;
+        for (let i = 0; i < waveformPoints; i++) {
+          const x = 40 + i * spacing;
+          const distFromCenter = Math.abs(x - centerX);
 
-        const factor = Math.sin((i / waveformPoints) * Math.PI);
-        const dynamicH = Math.max(3, Math.sin(angle * 5 + i * 0.45) * waveAmplitude * factor);
+          if (distFromCenter < 35) continue;
 
-        const grad = ctx.createLinearGradient(x, centerY - dynamicH, x, centerY + dynamicH);
-        grad.addColorStop(0, '#ffaa00');
-        grad.addColorStop(0.5, '#ff5500');
-        grad.addColorStop(1, '#ffaa00');
+          const factor = Math.sin((i / waveformPoints) * Math.PI);
+          const dynamicH = Math.max(2, Math.sin(angle * 5 + i * 0.45) * waveAmplitude * factor);
 
-        ctx.fillStyle = grad;
-        ctx.shadowColor = 'rgba(255, 120, 0, 0.8)';
-        ctx.shadowBlur = 8;
-        ctx.fillRect(x, centerY - dynamicH, barWidth, dynamicH * 2);
+          const grad = ctx.createLinearGradient(x, centerY - dynamicH, x, centerY + dynamicH);
+          grad.addColorStop(0, '#ffaa00');
+          grad.addColorStop(0.5, '#ff5500');
+          grad.addColorStop(1, '#ffaa00');
+
+          ctx.fillStyle = grad;
+          ctx.shadowColor = 'rgba(255, 120, 0, 0.8)';
+          ctx.shadowBlur = 8;
+          ctx.fillRect(x, centerY - dynamicH, barWidth, dynamicH * 2);
+        }
+        ctx.restore();
       }
-      ctx.restore();
 
       // 5. Center Microphone Capsule
       ctx.save();
