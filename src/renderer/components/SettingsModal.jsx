@@ -23,7 +23,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
           <div className="flex items-center space-x-2.5 text-purple-400">
             <Sliders className="w-5 h-5" />
             <h2 className="font-mono font-bold text-sm tracking-widest uppercase">
-              NOVA AI // MULTI-MODEL BRAIN CONFIG
+              NOVA AI // UNIFIED BRAIN CONFIGURATION
             </h2>
           </div>
           <button
@@ -39,13 +39,13 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
           {/* Provider Selection Tabs */}
           <div>
             <label className="text-xs font-mono uppercase text-slate-400 block mb-2 font-semibold tracking-wider">
-              Cognitive Engine Gateway
+              Primary Cognitive Gateway
             </label>
             <div className="grid grid-cols-3 gap-3">
               {[
-                { id: 'openrouter', label: 'OpenRouter (Multi-Model)' },
                 { id: 'gemini', label: 'Google Gemini 2.0' },
-                { id: 'custom', label: 'Custom / Local API' }
+                { id: 'openrouter', label: 'OpenRouter (Multi-Model)' },
+                { id: 'custom', label: 'Groq / Custom API' }
               ].map((prov) => (
                 <button
                   key={prov.id}
@@ -63,7 +63,57 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
             </div>
           </div>
 
-          {/* 1. OpenRouter Multi-Model Engine (2026 Core Integration) */}
+          {/* 1. Google Gemini 2.0 Engine Configuration */}
+          {formData.provider === 'gemini' && (
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-4">
+              <div>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
+                  Google Gemini API Key
+                </label>
+                <input
+                  type="password"
+                  value={formData.geminiKey || ''}
+                  onChange={(e) => handleChange('geminiKey', e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
+                  Gemini Model Variant
+                </label>
+                <input
+                  list="gemini-models"
+                  type="text"
+                  value={formData.geminiModel || 'gemini-2.0-flash'}
+                  onChange={(e) => handleChange('geminiModel', e.target.value)}
+                  placeholder="gemini-2.0-flash, gemini-1.5-pro"
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
+                />
+                <datalist id="gemini-models">
+                  <option value="gemini-2.0-flash" />
+                  <option value="gemini-1.5-flash" />
+                  <option value="gemini-1.5-pro" />
+                </datalist>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800/80">
+                <label className="text-xs font-mono uppercase text-purple-300 block mb-1">
+                  Fail-Safe OpenRouter Backup Key (Zero Rate-Limit)
+                </label>
+                <input
+                  type="password"
+                  value={formData.openrouterKey || ''}
+                  onChange={(e) => handleChange('openrouterKey', e.target.value)}
+                  placeholder="sk-or-v1-... (Used if Gemini quota exhausts)"
+                  className="w-full px-3.5 py-2 bg-slate-900/80 border border-slate-800 rounded-xl text-xs text-purple-300 focus:outline-none focus:border-purple-400 font-mono"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 2. OpenRouter Universal Engine Configuration */}
           {formData.provider === 'openrouter' && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-4 shadow-[0_0_20px_rgba(168,85,247,0.15)]">
               <div className="flex items-center justify-between">
@@ -88,18 +138,15 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-mono uppercase text-slate-300">
-                    Active OpenRouter Model ID
-                  </label>
-                  <span className="text-[10px] text-purple-400 font-mono">Custom or Free Select</span>
-                </div>
+                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
+                  Model Identifier (Select Free or Type Custom)
+                </label>
                 <input
                   list="openrouter-models"
                   type="text"
                   value={formData.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free'}
                   onChange={(e) => handleChange('openrouterModel', e.target.value)}
-                  placeholder="e.g. deepseek/deepseek-r1:free, anthropic/claude-3.5-sonnet"
+                  placeholder="e.g. meta-llama/llama-3.3-70b-instruct:free"
                   className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-purple-400 font-mono"
                 />
                 <datalist id="openrouter-models">
@@ -110,73 +157,20 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
                   <option value="anthropic/claude-3.5-sonnet" />
                   <option value="openai/gpt-4o" />
                 </datalist>
-                <p className="text-[11px] text-slate-500 mt-1 font-mono">
-                  Select free 2026 models or enter your custom model tag.
-                </p>
               </div>
             </div>
           )}
 
-          {/* 2. Google Gemini 2.0 Engine */}
-          {formData.provider === 'gemini' && (
-            <div className="p-4 rounded-2xl bg-slate-950/80 border border-cyan-500/30 space-y-4">
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Google Gemini API Key
-                </label>
-                <input
-                  type="password"
-                  value={formData.geminiKey || ''}
-                  onChange={(e) => handleChange('geminiKey', e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Gemini Model Variant
-                </label>
-                <input
-                  list="gemini-presets"
-                  type="text"
-                  value={formData.geminiModel || 'gemini-2.0-flash'}
-                  onChange={(e) => handleChange('geminiModel', e.target.value)}
-                  placeholder="gemini-2.0-flash, gemini-1.5-pro"
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
-                />
-                <datalist id="gemini-presets">
-                  <option value="gemini-2.0-flash" />
-                  <option value="gemini-1.5-flash" />
-                  <option value="gemini-1.5-pro" />
-                </datalist>
-              </div>
-
-              {/* Automatic Fallback Switch */}
-              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                <span className="text-xs font-mono text-slate-300">
-                  Auto-Failover to OpenRouter on Gemini Quota Limit
-                </span>
-                <input
-                  type="checkbox"
-                  checked={formData.autoFailover !== false}
-                  onChange={(e) => handleChange('autoFailover', e.target.checked)}
-                  className="w-4 h-4 accent-purple-500"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* 3. Custom Gateway Settings */}
+          {/* 3. Groq or Custom Endpoint */}
           {formData.provider === 'custom' && (
             <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Base URL</label>
                 <input
                   type="text"
-                  value={formData.customBaseURL || ''}
+                  value={formData.customBaseURL || 'https://api.groq.com/openai/v1'}
                   onChange={(e) => handleChange('customBaseURL', e.target.value)}
-                  placeholder="http://localhost:11434/v1"
+                  placeholder="https://api.groq.com/openai/v1"
                   className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-cyan-300 focus:outline-none focus:border-cyan-400 font-mono"
                 />
               </div>
@@ -186,7 +180,7 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
                   type="password"
                   value={formData.customKey || ''}
                   onChange={(e) => handleChange('customKey', e.target.value)}
-                  placeholder="Secret key"
+                  placeholder="gsk_... or custom key"
                   className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
                 />
               </div>
@@ -194,9 +188,9 @@ export default function SettingsModal({ isOpen, onClose, currentSettings, onSave
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Model Name</label>
                 <input
                   type="text"
-                  value={formData.customModel || ''}
+                  value={formData.customModel || 'llama-3.3-70b-versatile'}
                   onChange={(e) => handleChange('customModel', e.target.value)}
-                  placeholder="llama-3.3, mistral"
+                  placeholder="llama-3.3-70b-versatile"
                   className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-400 font-mono"
                 />
               </div>
