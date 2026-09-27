@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -27,7 +27,7 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// 3. Single Instance Lock
+// 3. Single Instance Enforcement
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -44,6 +44,7 @@ try { ttsEngine = require('./tts_engine'); } catch (e) { logEmergencyCrash('TTS 
 try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Load', e); }
 
 let mainWindow = null;
+let activeRegisteredHotkey = 'Alt+Space';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -57,6 +58,7 @@ const DEFAULT_SETTINGS = {
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
   voice: 'en-US-AriaNeural',
+  globalHotkey: 'Alt+Space',
   autoSpeak: true,
   autoVision: true,
   autoFailover: true
@@ -91,6 +93,38 @@ function writeSettings(newConfig) {
     return { success: true };
   } catch (err) {
     logEmergencyCrash('Settings Write Warning', err);
+    return { success: false, error: err.message };
+  }
+}
+
+function registerGlobalPushToTalkHotkey(hotkeyStr) {
+  try {
+    globalShortcut.unregisterAll();
+    const targetKey = hotkeyStr && hotkeyStr.trim() ? hotkeyStr.trim() : 'Alt+Space';
+
+    const registered = globalShortcut.register(targetKey, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.webContents.send('nova:hotkeyTrigger');
+      }
+    });
+
+    if (registered) {
+      activeRegisteredHotkey = targetKey;
+      return { success: true, hotkey: targetKey };
+    } else {
+      // Fallback to default Alt+Space
+      const fallback = globalShortcut.register('Alt+Space', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.webContents.send('nova:hotkeyTrigger');
+        }
+      });
+      activeRegisteredHotkey = 'Alt+Space';
+      return { success: fallback, hotkey: 'Alt+Space' };
+    }
+  } catch (err) {
+    logEmergencyCrash('Hotkey Registration Fault', err);
     return { success: false, error: err.message };
   }
 }
@@ -146,7 +180,6 @@ function resolveIndexPath() {
 function createWindow() {
   const preloadResolved = resolvePreloadPath();
 
-  // Native Windows frame enabled: OS-native minimize, maximize, and clean exit
   mainWindow = new BrowserWindow({
     title: 'NOVA AI',
     width: 1340,
@@ -173,7 +206,6 @@ function createWindow() {
     loadProductionBuild(mainWindow);
   }
 
-  // Absolute privacy shutdown: when window is closed, cleanly tear down the entire application
   mainWindow.on('close', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('nova:systemShutdown');
@@ -211,8 +243,29 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  // Register configured or default Alt+Space Push-to-Talk global hotkey
+  const config = readSettings();
+  registerGlobalPushToTalkHotkey(config.globalHotkey || 'Alt+Space');
+
+  // Dynamic Hotkey Registrar from Settings UI
+  ipcMain.handle('nova:updateHotkey', (_, newHotkey) => {
+    const res = registerGlobalPushToTalkHotkey(newHotkey);
+    if (res.success) {
+      const current = readSettings();
+      current.globalHotkey = res.hotkey;
+      writeSettings(current);
+    }
+    return res;
+  });
+
   ipcMain.handle('nova:getSettings', () => readSettings());
-  ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
+  ipcMain.handle('nova:saveSettings', (_, data) => {
+    const res = writeSettings(data);
+    if (data.globalHotkey && data.globalHotkey !== activeRegisteredHotkey) {
+      registerGlobalPushToTalkHotkey(data.globalHotkey);
+    }
+    return res;
+  });
 
   ipcMain.handle('nova:captureScreen', async () => {
     try {
@@ -247,8 +300,8 @@ app.whenReady().then(() => {
     return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
   });
 
-  ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, includeVision }) => {
-    const config = readSettings();
+  ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
+    const settings = readSettings();
     try {
       broadcastState('thinking');
 
@@ -263,22 +316,21 @@ app.whenReady().then(() => {
         throw new Error('AI Engine subsystem offline.');
       }
 
-      // Ultra-low latency streaming inference
       const aiResponse = await aiEngine.runAIInferenceStream(
         text,
         audioBase64,
         visionData,
-        config,
+        settings,
+        conversationHistory || [],
         (streamChunk) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
           }
         },
         async (earlySentence) => {
-          // Immediately synthesize speech on the very first completed sentence
-          if (config.autoSpeak && ttsEngine && ttsEngine.synthesizeAudioStream) {
+          if (settings.autoSpeak && ttsEngine && ttsEngine.synthesizeAudioStream) {
             broadcastState('speaking');
-            const earlyAudio = await ttsEngine.synthesizeAudioStream(earlySentence, config.voice || 'en-US-AriaNeural');
+            const earlyAudio = await ttsEngine.synthesizeAudioStream(earlySentence, settings.voice || 'en-US-AriaNeural');
             if (earlyAudio && mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('nova:earlyAudioChunk', earlyAudio);
             }
@@ -286,7 +338,6 @@ app.whenReady().then(() => {
         }
       );
 
-      // Execute OS automation commands
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -295,8 +346,8 @@ app.whenReady().then(() => {
       }
 
       let audioResult = null;
-      if (config.autoSpeak && aiResponse.spokenResponse && ttsEngine && ttsEngine.synthesizeAudioStream) {
-        audioResult = await ttsEngine.synthesizeAudioStream(aiResponse.spokenResponse, config.voice || 'en-US-AriaNeural');
+      if (settings.autoSpeak && aiResponse.spokenResponse && ttsEngine && ttsEngine.synthesizeAudioStream) {
+        audioResult = await ttsEngine.synthesizeAudioStream(aiResponse.spokenResponse, settings.voice || 'en-US-AriaNeural');
       }
 
       broadcastState('idle');
@@ -314,7 +365,7 @@ app.whenReady().then(() => {
       let errorAudio = null;
       if (ttsEngine && ttsEngine.synthesizeAudioStream) {
         try {
-          errorAudio = await ttsEngine.synthesizeAudioStream(spokenError, config.voice || 'en-US-AriaNeural');
+          errorAudio = await ttsEngine.synthesizeAudioStream(spokenError, settings.voice || 'en-US-AriaNeural');
         } catch (_) {}
       }
 
@@ -337,9 +388,9 @@ app.on('second-instance', () => {
   }
 });
 
-// Absolute privacy cleanup on app close
 app.on('before-quit', () => {
   app.isQuitting = true;
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
