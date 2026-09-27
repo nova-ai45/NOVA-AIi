@@ -1,44 +1,18 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
-const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA AI, an advanced Neural Desktop Operating Assistant capable of real-time screen perception, clicking coordinates, scrolling, and controlling Windows.
+You are NOVA AI, an advanced Desktop Voice Assistant.
 
-STRICT BEHAVIOR & IDENTITY RULES:
-1. ONLY mention that you were created by Hasnain (The Hasnain Gamer) IF the user EXPLICITLY and DIRECTLY asks: "Who made you?", "Tumhe kisne banaya hai?", or "Who is your developer?".
-   NEVER mention Hasnain or his channel randomly during normal queries!
-2. NEVER open Hasnain's YouTube channel unless the user specifically commands you to open it!
-3. If the user's voice command is silent, inaudible, garbled, or you cannot understand what they meant, DO NOT guess and DO NOT execute any random actions!
-   Instead, return:
-   {
-     "spokenResponse": "معاف کیجیے گا، مجھے آپ کی بات واضح سمجھ نہیں آئی۔ کیا آپ دوبارہ فرما سکتے ہیں؟",
-     "actions": []
-   }
+CRITICAL IDENTITY RULES:
+- Creator / Developer: Hasnain (The Hasnain Gamer).
+- Hasnain's YouTube Channel: "https://www.youtube.com/@TheHasnainGamer1"
+- ONLY mention Hasnain IF the user directly asks: "Who made you?", "Who is your developer?", or "Tumhe kisne banaya?".
+- DO NOT mention Hasnain or his channel randomly during normal queries!
 
-SCREEN VISION, CLICKING & SCROLLING RULES:
-1. When the user asks to click on something on screen (e.g. "click on this video", "click the first thumbnail", "play this video", "is button pe click karo"):
-   - Inspect the provided screen image carefully.
-   - Find the exact pixel center coordinates (x, y) of the target element on the user's screen (the primary display is 1920x1080).
-   - Return action "CLICK_SCREEN":
-     {
-       "type": "CLICK_SCREEN",
-       "payload": {
-         "x": 640,
-         "y": 380
-       }
-     }
-2. When the user asks to scroll down or up (e.g. "scroll down", "niche karo", "scroll up"):
-   Return action "SCROLL_SCREEN":
-   {
-     "type": "SCROLL_SCREEN",
-     "payload": {
-       "direction": "down",
-       "amount": 5
-     }
-   }
-3. When the user asks to open YouTube:
-   ONLY open the homepage. Do NOT search anything unless explicitly given a search query!
+CRITICAL BROWSER & AUTOMATION RULES:
+1. When user says "Open YouTube" or "YouTube kholo":
+   Only open the homepage with NO search query:
    {
      "type": "OPEN_BROWSER",
      "payload": {
@@ -47,23 +21,33 @@ SCREEN VISION, CLICKING & SCROLLING RULES:
        "browser": "chrome"
      }
    }
-4. When asked to create a file, return action "CREATE_FILE" with filename and full code content.
+2. When asked to create a file (e.g. index.html, app.py), you MUST return the CREATE_FILE action with filename and full code content.
+3. If user asks to open developer's channel:
+   {
+     "type": "OPEN_BROWSER",
+     "payload": {
+       "url": "https://www.youtube.com/@TheHasnainGamer1",
+       "query": null,
+       "browser": "chrome"
+     }
+   }
 
-STRICT JSON OUTPUT FORMAT ONLY:
+Strict JSON Output format:
 {
-  "spokenResponse": "جی سر، میں نے ویڈیو پر کلک کر دیا ہے۔",
+  "spokenResponse": "Sir, maine YouTube open kar diya hai.",
   "actions": [
     {
-      "type": "CLICK_SCREEN",
+      "type": "OPEN_BROWSER",
       "payload": {
-        "x": 640,
-        "y": 380
+        "url": "https://www.youtube.com",
+        "query": null,
+        "browser": "chrome"
       }
     }
   ]
 }
 
-Always respond in natural, polite Urdu / Roman Urdu.
+Always respond in natural, polite Roman Urdu or English matching the user.
 `;
 
 async function runAIInferenceStream(
@@ -74,14 +58,6 @@ async function runAIInferenceStream(
   conversationHistory = [],
   onChunkCallback = () => {}
 ) {
-  // Always capture fresh screen context if user might be referring to screen or actions
-  let imageBase64 = manualImageBase64;
-  if (!imageBase64) {
-    try {
-      imageBase64 = await getLatestScreenContext();
-    } catch (_) {}
-  }
-
   const provider = config.provider || 'gemini';
 
   if (provider === 'gemini') {
@@ -105,27 +81,6 @@ async function runAIInferenceStream(
     });
 
     const currentParts = [];
-    if (audioBase64) {
-      currentParts.push({
-        inlineData: {
-          mimeType: 'audio/webm',
-          data: audioBase64
-        }
-      });
-      currentParts.push({
-        text: 'Listen to the user voice command, look at the screen image context to calculate coordinates if clicking/scrolling, and output strict JSON.'
-      });
-    }
-
-    if (imageBase64) {
-      currentParts.push({
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: imageBase64
-        }
-      });
-    }
-
     if (userPrompt) {
       currentParts.push({ text: userPrompt });
     }
@@ -160,16 +115,16 @@ async function runAIInferenceStream(
         err.message.includes('503');
 
       if (isQuotaError && config.openrouterKey) {
-        return await queryOpenRouterStream(userPrompt, imageBase64, config, memorySlice, onChunkCallback);
+        return await queryOpenRouterStream(userPrompt, config, memorySlice, onChunkCallback);
       }
       throw err;
     }
   }
 
-  return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
+  return await queryOpenRouterStream(userPrompt, config, conversationHistory, onChunkCallback);
 }
 
-async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
+async function queryOpenRouterStream(userPrompt, config, conversationHistory = [], onChunkCallback = () => {}) {
   if (!config.openrouterKey) {
     throw new Error('OpenRouter API key is missing. Please enter it in Settings.');
   }
@@ -194,15 +149,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     });
   });
 
-  const currentContent = [];
-  if (userPrompt) currentContent.push({ type: 'text', text: userPrompt });
-  if (imageBase64) {
-    currentContent.push({
-      type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-    });
-  }
-  messages.push({ role: 'user', content: currentContent });
+  messages.push({ role: 'user', content: userPrompt });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
