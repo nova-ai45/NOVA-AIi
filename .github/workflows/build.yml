@@ -1,0 +1,59 @@
+name: Build & Release NOVA AI Windows Installer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # 1. کوڈ ریپوزٹری چیک آؤٹ
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      # 2. Node.js 20 انوائرنمنٹ سیٹ اپ
+      - name: Setup Node.js 20.x Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 3. تمام پیکیجز اور لائبریریز انسٹال کرنا
+      - name: Install Project Dependencies
+        run: npm install
+
+      # 4. ری ایکٹ فرنٹ اینڈ (Vite UI) کمپائل کرنا
+      - name: Compile React Frontend Application
+        run: npm run build:renderer
+
+      # 5. الیکٹران پورٹ ایبل ایگزیکیوٹیبل ان پیک کرنا
+      - name: Unpack Electron Executable Architecture
+        run: npx electron-builder --win --dir
+
+      # 6. انو سیٹ اپ کمپائلر (Inno Setup) انسٹال کرنا
+      - name: Install Inno Setup Compiler
+        shell: powershell
+        run: |
+          choco install innosetup --no-progress -y
+
+      # 7. آفیشل ونڈوز سیٹ اپ وزرڈ (.exe) تیار کرنا
+      - name: Compile Windows Installer with Inno Setup
+        shell: powershell
+        run: |
+          $isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $isccPath)) {
+            $isccPath = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          }
+          Write-Host "Compiling setup.iss using: $isccPath"
+          & $isccPath setup.iss
+
+      # 8. تیار شدہ .exe انسٹالر کو گٹ ہب پر اپلوڈ کرنا
+      - name: Upload Binary Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-AI-Setup-Windows
+          path: release-installer/NOVA-AI-Setup.exe
