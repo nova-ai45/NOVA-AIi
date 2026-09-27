@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Sliders, Mic, Sparkles, AlertCircle, CheckCircle, Trash2, Keyboard } from 'lucide-react';
+import { X, Save, Sliders, Mic, AlertCircle, CheckCircle, Trash2, Keyboard } from 'lucide-react';
 
 export default function SettingsModal({
   isOpen,
@@ -39,13 +39,12 @@ export default function SettingsModal({
     setTimeout(() => setMemoryCleared(false), 2000);
   };
 
-  // Interactive Hotkey Capture Engine
+  // Interactive OS Global Hotkey Recorder
   const handleHotkeyKeyDown = (e) => {
     if (!recordingHotkey) return;
     e.preventDefault();
     e.stopPropagation();
 
-    // Ignore single modifier key presses
     if (['Alt', 'Control', 'Shift', 'Meta'].includes(e.key)) return;
 
     const parts = [];
@@ -77,7 +76,7 @@ export default function SettingsModal({
           <div className="flex items-center space-x-2.5 text-purple-400">
             <Sliders className="w-5 h-5" />
             <h2 className="font-mono font-bold text-sm tracking-widest uppercase">
-              {isFirstRun ? 'NOVA AI // INITIAL COGNITIVE SETUP' : 'SYSTEM CONFIGURATION & CONVERSATIONAL MEMORY'}
+              {isFirstRun ? 'NOVA AI // INITIAL COGNITIVE SETUP' : 'SYSTEM CONFIGURATION & PERSISTENT MEMORY'}
             </h2>
           </div>
           {!isFirstRun && (
@@ -248,7 +247,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* User-Customizable OS Push-to-Talk Global Hotkey */}
+          {/* Global Hotkey (Default: Alt+Space) */}
           <div className="p-4 rounded-2xl bg-slate-950/80 border border-purple-500/30 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 text-purple-400">
@@ -257,14 +256,14 @@ export default function SettingsModal({
                   Global Push-to-Talk Hotkey (Default: Alt+Space)
                 </label>
               </div>
-              <span className="text-[10px] text-slate-500 font-mono">Works in background</span>
+              <span className="text-[10px] text-slate-500 font-mono">Immediate OS Hook</span>
             </div>
 
             <div className="flex items-center space-x-3">
               <input
                 type="text"
                 readOnly
-                value={recordingHotkey ? 'Press keys combination...' : formData.globalHotkey || 'Alt+Space'}
+                value={recordingHotkey ? 'Press key combination...' : formData.globalHotkey || 'Alt+Space'}
                 onKeyDown={handleHotkeyKeyDown}
                 className={`flex-1 px-3.5 py-2 rounded-xl text-sm font-mono focus:outline-none border ${
                   recordingHotkey
@@ -285,11 +284,11 @@ export default function SettingsModal({
               </button>
             </div>
             <p className="text-[10px] text-slate-500 font-mono">
-              Click "Record Hotkey" and press your combination (e.g., Alt+Space, Control+Shift+Z). Press key to start speaking, press again to submit immediately.
+              Press "Record Hotkey" and enter a combination (e.g., Alt+Space, Shift+Space, Control+Shift+Z). Updates instantly without restarting.
             </p>
           </div>
 
-          {/* Multi-Turn Context Memory Management */}
+          {/* Memory Management */}
           <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 flex items-center justify-between">
             <div className="flex flex-col space-y-0.5">
               <span className="text-xs font-mono font-bold text-slate-300 uppercase">Conversational Memory Context</span>
@@ -309,24 +308,6 @@ export default function SettingsModal({
               <Trash2 className="w-3.5 h-3.5" />
               <span>{memoryCleared ? 'Purged!' : 'Clear Memory'}</span>
             </button>
-          </div>
-
-          {/* Voice Engine */}
-          <div className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
-            <div className="flex items-center space-x-2 text-cyan-400">
-              <Mic className="w-4 h-4" />
-              <label className="text-xs font-mono uppercase text-slate-300 font-bold">Natural Voice Persona</label>
-            </div>
-            <select
-              value={formData.voice || 'en-US-AriaNeural'}
-              onChange={(e) => handleChange('voice', e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-cyan-400 font-mono"
-            >
-              <option value="en-US-AriaNeural">Aria (English Female - Natural Executive)</option>
-              <option value="en-US-GuyNeural">Guy (English Male - Deep Tactical)</option>
-              <option value="ur-PK-UzmaNeural">Uzma (Urdu Female - Pakistan)</option>
-              <option value="hi-IN-SwaraNeural">Swara (Hindi Female - India)</option>
-            </select>
           </div>
         </div>
 
