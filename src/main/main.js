@@ -1,14 +1,12 @@
-const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// 1. Prevent hardware acceleration GPU crashes
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
 
-// 2. Emergency Crash Logger
 function logEmergencyCrash(type, error) {
   const errString = error && error.stack ? error.stack : String(error);
   const logMessage = `[${new Date().toISOString()}] ${type}:\n${errString}\n\n`;
@@ -27,7 +25,6 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// 3. Single Instance Lock
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -35,16 +32,13 @@ if (!gotLock) {
 
 let automation = null;
 let vision = null;
-let ttsEngine = null;
 let aiEngine = null;
 
 try { automation = require('./automation'); } catch (e) { logEmergencyCrash('Automation Load', e); }
 try { vision = require('./vision'); } catch (e) { logEmergencyCrash('Vision Load', e); }
-try { ttsEngine = require('./tts_engine'); } catch (e) { logEmergencyCrash('TTS Load', e); }
 try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Load', e); }
 
 let mainWindow = null;
-let activeRegisteredHotkey = 'Alt+Space';
 
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -57,8 +51,6 @@ const DEFAULT_SETTINGS = {
   customBaseURL: 'https://api.groq.com/openai/v1',
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
-  voice: 'default',
-  globalHotkey: 'Alt+Space',
   autoSpeak: true,
   autoVision: true,
   autoFailover: true
@@ -93,38 +85,6 @@ function writeSettings(newConfig) {
     return { success: true };
   } catch (err) {
     logEmergencyCrash('Settings Write Warning', err);
-    return { success: false, error: err.message };
-  }
-}
-
-// OS Global Hotkey Registrar with dynamic hotkey swapping
-function registerGlobalPushToTalkHotkey(hotkeyStr) {
-  try {
-    globalShortcut.unregisterAll();
-    const targetKey = hotkeyStr && hotkeyStr.trim() ? hotkeyStr.trim() : 'Alt+Space';
-
-    const registered = globalShortcut.register(targetKey, () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.webContents.send('nova:hotkeyTrigger');
-      }
-    });
-
-    if (registered) {
-      activeRegisteredHotkey = targetKey;
-      return { success: true, hotkey: targetKey };
-    } else {
-      const fallback = globalShortcut.register('Alt+Space', () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          if (mainWindow.isMinimized()) mainWindow.restore();
-          mainWindow.webContents.send('nova:hotkeyTrigger');
-        }
-      });
-      activeRegisteredHotkey = 'Alt+Space';
-      return { success: fallback, hotkey: 'Alt+Space' };
-    }
-  } catch (err) {
-    logEmergencyCrash('Hotkey Registration Fault', err);
     return { success: false, error: err.message };
   }
 }
@@ -240,39 +200,8 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // Register configured OS hotkey
-  const config = readSettings();
-  registerGlobalPushToTalkHotkey(config.globalHotkey || 'Alt+Space');
-
-  // Dynamic Hotkey Registrar from Settings
-  ipcMain.handle('nova:updateHotkey', (_, newHotkey) => {
-    const res = registerGlobalPushToTalkHotkey(newHotkey);
-    if (res.success) {
-      const current = readSettings();
-      current.globalHotkey = res.hotkey;
-      writeSettings(current);
-    }
-    return res;
-  });
-
-  ipcMain.handle('update-global-hotkey', (_, newHotkey) => {
-    const res = registerGlobalPushToTalkHotkey(newHotkey);
-    if (res.success) {
-      const current = readSettings();
-      current.globalHotkey = res.hotkey;
-      writeSettings(current);
-    }
-    return res;
-  });
-
   ipcMain.handle('nova:getSettings', () => readSettings());
-  ipcMain.handle('nova:saveSettings', (_, data) => {
-    const res = writeSettings(data);
-    if (data.globalHotkey && data.globalHotkey !== activeRegisteredHotkey) {
-      registerGlobalPushToTalkHotkey(data.globalHotkey);
-    }
-    return res;
-  });
+  ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
   ipcMain.handle('nova:captureScreen', async () => {
     try {
@@ -294,7 +223,6 @@ app.whenReady().then(() => {
     return await automation.openBrowserAndPlay(url, searchQuery, false, broadcastLog);
   });
 
-  // AI Pipeline Execution Handler
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
     try {
@@ -306,6 +234,7 @@ app.whenReady().then(() => {
       }
 
       if (text) broadcastLog('command', `User Directive: "${text}"`);
+      else if (audioBase64) broadcastLog('command', 'User: [Voice Directive Transmitted]');
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
@@ -325,7 +254,6 @@ app.whenReady().then(() => {
         () => {}
       );
 
-      // Execute automation actions
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -360,11 +288,6 @@ app.on('second-instance', () => {
     }
     mainWindow.focus();
   }
-});
-
-app.on('before-quit', () => {
-  app.isQuitting = true;
-  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
