@@ -1,14 +1,13 @@
 const { desktopCapturer } = require('electron');
 
-// Always-on silent background screenshot stream cache
 let cachedScreenBase64 = null;
 let isCaptureInProgress = false;
-let streamInterval = null;
 
 /**
- * Captures primary display frame safely without prompting user permission modals.
+ * Captures primary display frame safely on-demand.
+ * Must only be called AFTER app.whenReady().
  */
-async function capturePrimaryDisplay() {
+async function captureActiveDisplay() {
   if (isCaptureInProgress) return cachedScreenBase64;
   isCaptureInProgress = true;
 
@@ -25,7 +24,7 @@ async function capturePrimaryDisplay() {
       cachedScreenBase64 = jpegBuffer.toString('base64');
     }
   } catch (error) {
-    console.error('Vision streaming frame capture warning:', error.message);
+    console.error('Vision capture error:', error.message);
   } finally {
     isCaptureInProgress = false;
   }
@@ -33,40 +32,11 @@ async function capturePrimaryDisplay() {
   return cachedScreenBase64;
 }
 
-/**
- * Starts continuous background screen perception loop.
- * Automatically samples the display every 2 seconds into a live memory buffer.
- */
-function initAlwaysOnVisionStream(intervalMs = 2000) {
-  if (streamInterval) clearInterval(streamInterval);
-  capturePrimaryDisplay();
-  streamInterval = setInterval(() => {
-    capturePrimaryDisplay();
-  }, intervalMs);
-}
-
-/**
- * Instantaneous access to latest screen buffer for multi-modal AI router.
- */
 async function getLatestScreenContext() {
-  if (cachedScreenBase64) {
-    return cachedScreenBase64;
-  }
-  return await capturePrimaryDisplay();
+  return await captureActiveDisplay();
 }
-
-/**
- * Direct explicit capture export for backwards compatibility.
- */
-async function captureActiveDisplay() {
-  return await capturePrimaryDisplay();
-}
-
-// Automatically initiate continuous vision sampling upon main process boot
-initAlwaysOnVisionStream();
 
 module.exports = {
   captureActiveDisplay,
-  getLatestScreenContext,
-  initAlwaysOnVisionStream
+  getLatestScreenContext
 };
