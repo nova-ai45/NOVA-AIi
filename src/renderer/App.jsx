@@ -2,25 +2,21 @@ import React, { useState, useEffect, useRef } from 'react';
 import NovaSphere from './components/NovaSphere';
 import SettingsModal from './components/SettingsModal';
 import {
+  Home,
+  Activity,
+  Settings,
   Mic,
   MicOff,
   Send,
   Plus,
   Moon,
-  Sun,
   Minus,
   Square,
   X,
   Volume2,
   Cpu,
   HardDrive,
-  Activity,
-  Home,
-  Brain,
-  FolderCode,
-  Globe,
-  Settings,
-  Sparkles
+  Eye
 } from 'lucide-react';
 
 export default function App() {
@@ -39,19 +35,20 @@ export default function App() {
 
   // Live System Metrics
   const [sysMetrics, setSysMetrics] = useState({
-    cpu: 14,
-    ram: 46,
-    disk: 32
+    cpu: 12,
+    ram: 44,
+    disk: 31
   });
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const currentAudioRef = useRef(null);
   const audioContextRef = useRef(null);
   const animFrameRef = useRef(null);
   const isSpeakingRef = useRef(false);
   const hasGreetedRef = useRef(false);
 
-  // 1. Clock & Initial Handshake
+  // 1. Clock, Metrics & Global Listeners
   useEffect(() => {
     const updateDateTime = () => {
       const now = new Date();
@@ -75,16 +72,14 @@ export default function App() {
     updateDateTime();
     const clockInterval = setInterval(updateDateTime, 1000);
 
-    // Mock/Fetch Dynamic System Hardware Stats
     const metricsInterval = setInterval(() => {
       setSysMetrics({
-        cpu: Math.floor(10 + Math.sin(Date.now() / 2000) * 8 + Math.random() * 5),
-        ram: Math.floor(45 + Math.cos(Date.now() / 3500) * 4),
-        disk: 32
+        cpu: Math.floor(10 + Math.sin(Date.now() / 2200) * 8 + Math.random() * 4),
+        ram: Math.floor(42 + Math.cos(Date.now() / 3200) * 5),
+        disk: 31
       });
-    }, 2500);
+    }, 2000);
 
-    // Load Settings
     window.novaAPI.getSettings().then((cfg) => {
       setSettings(cfg);
     });
@@ -98,7 +93,16 @@ export default function App() {
       isSpeakingRef.current = st === 'speaking';
     });
 
-    // 2. Initial Launch Voice Greeting (Target Spec Requirement)
+    // 2. Global Hotkey (Ctrl + Space) for instant voice access
+    const handleGlobalKeyDown = (e) => {
+      if (e.ctrlKey && e.code === 'Space') {
+        e.preventDefault();
+        toggleListening();
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+
+    // 3. Initial Launch Greeting (Guaranteed single-execution)
     if (!hasGreetedRef.current) {
       hasGreetedRef.current = true;
       setTimeout(async () => {
@@ -106,28 +110,49 @@ export default function App() {
         try {
           const res = await window.novaAPI.synthesizeVoice(greeting);
           if (res && res.base64Audio) {
-            playAudioWithWaveform(res.base64Audio);
+            playAudioQueueSafe(res.base64Audio);
           }
         } catch (_) {}
-      }, 900);
+      }, 1000);
     }
 
     return () => {
       clearInterval(clockInterval);
       clearInterval(metricsInterval);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
       unsubLog();
       unsubState();
+      cancelAnyActiveAudio();
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
 
-  // Web Audio Waveform Analyzer
-  const playAudioWithWaveform = (base64Audio) => {
+  // Strict Audio Queue Controller: Purges all queued audio before new playback
+  const cancelAnyActiveAudio = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+    isSpeakingRef.current = false;
+  };
+
+  const playAudioQueueSafe = (base64Audio) => {
+    cancelAnyActiveAudio();
+
     try {
       isSpeakingRef.current = true;
       setSphereState('speaking');
 
       const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+      currentAudioRef.current = audio;
+
       if (!audioContextRef.current) {
         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       }
@@ -148,7 +173,7 @@ export default function App() {
         let sum = 0;
         for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
         const avg = sum / dataArray.length;
-        setAudioLevel(Math.min(1.0, Math.max(0.18, avg / 85)));
+        setAudioLevel(Math.min(1.0, Math.max(0.18, avg / 80)));
         animFrameRef.current = requestAnimationFrame(updatePulse);
       };
 
@@ -157,7 +182,14 @@ export default function App() {
         isSpeakingRef.current = false;
         setSphereState('idle');
         setAudioLevel(0.18);
+        currentAudioRef.current = null;
       };
+      audio.onerror = () => {
+        isSpeakingRef.current = false;
+        setSphereState('idle');
+        currentAudioRef.current = null;
+      };
+
       audio.play();
     } catch (_) {
       isSpeakingRef.current = false;
@@ -165,7 +197,6 @@ export default function App() {
     }
   };
 
-  // Continuous / Manual Speech Capture
   const toggleListening = async () => {
     if (isListening) {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -178,7 +209,13 @@ export default function App() {
 
     try {
       audioChunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
       recorder.ondataavailable = (e) => {
@@ -188,12 +225,16 @@ export default function App() {
       recorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = () => {
-          const base64Audio = reader.result.split(',')[1];
-          handleExecute(null, base64Audio);
-        };
+        if (audioBlob.size > 5000) {
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = () => {
+            const base64Audio = reader.result.split(',')[1];
+            handleExecute(null, base64Audio);
+          };
+        } else {
+          setSphereState('idle');
+        }
       };
 
       recorder.start();
@@ -201,7 +242,8 @@ export default function App() {
       setIsListening(true);
       setSphereState('listening');
     } catch (err) {
-      console.error('Mic access error:', err);
+      console.error('Microphone capture error:', err);
+      setIsListening(false);
     }
   };
 
@@ -209,9 +251,11 @@ export default function App() {
     const prompt = overridePrompt || inputText;
     if (!prompt.trim() && !audioData) return;
 
+    cancelAnyActiveAudio();
     setInputText('');
-    setSphereState('thinking');
+    setSphereState('processing');
 
+    // Continuous Screen Vision is always-on (no manual switch needed)
     const result = await window.novaAPI.processCommand({
       text: prompt,
       audioBase64: audioData,
@@ -219,7 +263,7 @@ export default function App() {
     });
 
     if (result && result.audioBase64) {
-      playAudioWithWaveform(result.audioBase64);
+      playAudioQueueSafe(result.audioBase64);
     } else {
       setSphereState('idle');
     }
@@ -227,8 +271,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen bg-[#030712] text-slate-100 font-sans overflow-hidden select-none">
-      {/* 1. LEFT SIDEBAR NAVIGATION */}
-      <aside className="w-20 bg-[#050816]/90 border-r border-slate-800/60 flex flex-col items-center justify-between py-6 z-30 backdrop-blur-xl">
+      {/* 1. CLEANED LEFT SIDEBAR: ONLY 3 CORE ACTION ITEMS */}
+      <aside className="w-20 bg-[#050816]/95 border-r border-slate-800/60 flex flex-col items-center justify-between py-6 z-30 backdrop-blur-2xl">
         {/* Top Logo */}
         <div className="flex flex-col items-center">
           <div className="relative group cursor-pointer">
@@ -249,77 +293,61 @@ export default function App() {
           </span>
         </div>
 
-        {/* Center Navigation Icons */}
-        <nav className="flex flex-col space-y-5">
+        {/* Core Navigation Items (Exactly 3 Functional Icons) */}
+        <nav className="flex flex-col space-y-6">
+          {/* Item 1: Home Dashboard */}
           <button
             onClick={() => setActiveTab('home')}
-            className={`p-3 rounded-2xl transition-all duration-300 ${
+            className={`p-3.5 rounded-2xl transition-all duration-300 ${
               activeTab === 'home'
-                ? 'bg-purple-600/30 text-purple-300 border border-purple-500/60 shadow-[0_0_20px_rgba(168,85,247,0.4)]'
+                ? 'bg-purple-600/30 text-purple-300 border border-purple-500/60 shadow-[0_0_25px_rgba(168,85,247,0.45)]'
                 : 'text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40'
             }`}
+            title="Home Dashboard"
           >
             <Home className="w-5 h-5" />
           </button>
 
+          {/* Item 2: Voice & Vision Status Trigger */}
           <button
             onClick={toggleListening}
-            className={`p-3 rounded-2xl transition-all duration-300 ${
+            className={`p-3.5 rounded-2xl transition-all duration-300 ${
               isListening
-                ? 'bg-rose-500/30 text-rose-300 border border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.4)] animate-pulse'
-                : 'text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40'
+                ? 'bg-rose-500/30 text-rose-300 border border-rose-500 shadow-[0_0_25px_rgba(244,63,94,0.5)] animate-pulse'
+                : 'text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 border border-transparent'
             }`}
+            title={isListening ? 'Stop Voice Mode' : 'Start Voice Mode (Ctrl+Space)'}
           >
-            <Mic className="w-5 h-5" />
+            {isListening ? <Mic className="w-5 h-5 text-rose-400" /> : <MicOff className="w-5 h-5" />}
           </button>
 
+          {/* Item 3: Unified Settings Modal */}
           <button
             onClick={() => setSettingsOpen(true)}
-            className="p-3 rounded-2xl text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 transition-all"
-            title="AI Brain / Models"
-          >
-            <Brain className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => handleExecute('Create a demo project file on my desktop')}
-            className="p-3 rounded-2xl text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 transition-all"
-            title="Files & Code"
-          >
-            <FolderCode className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => handleExecute('Open browser and navigate to YouTube')}
-            className="p-3 rounded-2xl text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 transition-all"
-            title="Browser Automation"
-          >
-            <Globe className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="p-3 rounded-2xl text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 transition-all"
-            title="Settings"
+            className="p-3.5 rounded-2xl text-slate-400 hover:text-cyan-400 hover:bg-slate-800/40 border border-transparent hover:border-slate-800 transition-all duration-300"
+            title="Unified AI Model & System Settings"
           >
             <Settings className="w-5 h-5" />
           </button>
         </nav>
 
-        {/* Bottom Status Indicator */}
-        <div className="flex flex-col items-center">
-          <div className="flex items-center space-x-2 px-2.5 py-1 rounded-full bg-slate-900/90 border border-emerald-500/30">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_#10b981] animate-ping" />
-            <span className="text-[9px] font-mono text-emerald-300 tracking-wider">Online</span>
+        {/* Vision & Mic Active Telemetry Status */}
+        <div className="flex flex-col items-center space-y-1.5">
+          <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-slate-900/90 border border-emerald-500/30">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981] animate-ping" />
+            <span className="text-[9px] font-mono text-emerald-300 tracking-wider font-semibold">Online</span>
           </div>
-          <span className="text-[8px] text-slate-500 mt-1">Ready to help you</span>
+          <span className="text-[8px] text-slate-500 font-mono flex items-center space-x-1">
+            <Eye className="w-2.5 h-2.5 text-cyan-400 inline" />
+            <span>Vision Sync</span>
+          </span>
         </div>
       </aside>
 
       {/* 2. MAIN APPLICATION CONTENT AREA */}
       <div className="flex-1 flex flex-col relative overflow-hidden bg-radial from-[#090e24] via-[#030712] to-[#02040a]">
-        {/* TOP HEADER BAR */}
-        <header className="flex items-center justify-between px-8 py-4 border-b border-slate-800/40 z-20">
+        {/* Top Header Bar */}
+        <header className="flex items-center justify-between px-8 py-3.5 border-b border-slate-800/40 z-20 backdrop-blur-md">
           <div className="flex items-center space-x-4">
             <span className="text-xs font-mono font-bold tracking-[0.35em] text-slate-300 uppercase">
               N O V A
@@ -330,29 +358,20 @@ export default function App() {
             </span>
           </div>
 
-          {/* Window Control Buttons */}
-          <div className="flex items-center space-x-3">
-            <button className="p-2 rounded-xl text-slate-400 hover:text-amber-300 hover:bg-slate-800/40 transition">
-              <Sun className="w-4 h-4" />
-            </button>
-            <button className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
-              <Minus className="w-4 h-4" />
-            </button>
-            <button className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
-              <Square className="w-3.5 h-3.5" />
-            </button>
-            <button className="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/20 transition">
-              <X className="w-4 h-4" />
-            </button>
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 text-[11px] font-mono text-slate-400 bg-slate-900/60 px-3 py-1 rounded-full border border-slate-800">
+              <span className="text-slate-500">HOTKEY:</span>
+              <strong className="text-purple-400">CTRL + SPACE</strong>
+            </div>
           </div>
         </header>
 
-        {/* CORE INTERACTIVE STAGE */}
+        {/* Central Stage */}
         <div className="flex-1 flex relative overflow-hidden">
-          {/* Central Holographic Arena */}
+          {/* Main Visual Arena */}
           <div className="flex-1 flex flex-col items-center justify-between p-6 relative">
-            {/* Top Glowing Pill Greeting Banner */}
-            <div className="z-10 mt-2 flex items-center space-x-3.5 px-6 py-3 rounded-full bg-[#0a0f26]/85 border border-purple-500/40 shadow-[0_0_30px_rgba(168,85,247,0.25)] backdrop-blur-2xl">
+            {/* Top Greeting Glass Banner */}
+            <div className="z-10 mt-1 flex items-center space-x-3.5 px-6 py-2.5 rounded-full bg-[#0a0f26]/85 border border-purple-500/40 shadow-[0_0_30px_rgba(168,85,247,0.25)] backdrop-blur-2xl">
               <div className="w-8 h-8 rounded-full bg-purple-600/30 border border-purple-400/50 flex items-center justify-center">
                 <Volume2 className="w-4 h-4 text-purple-300 animate-pulse" />
               </div>
@@ -366,12 +385,12 @@ export default function App() {
               </div>
             </div>
 
-            {/* Central 3D Glowing Core Sphere */}
+            {/* Central 3D Core Sphere with Background Vision Awareness */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <NovaSphere state={sphereState} audioLevel={audioLevel} />
             </div>
 
-            {/* Floating Bottom Capsule Command Bar */}
+            {/* Bottom Capsule Command Input Bar */}
             <div className="w-full max-w-3xl z-20 mb-2">
               <form
                 onSubmit={(e) => {
@@ -380,17 +399,15 @@ export default function App() {
                 }}
                 className="relative flex items-center bg-[#070c1e]/90 border border-purple-500/40 rounded-full px-3 py-2 shadow-[0_0_40px_rgba(147,51,234,0.2)] backdrop-blur-2xl focus-within:border-cyan-400 focus-within:shadow-[0_0_30px_rgba(0,240,255,0.3)] transition-all duration-300"
               >
-                {/* Plus / Quick Action Button */}
                 <button
                   type="button"
-                  onClick={() => handleExecute('Analyze my current screen context')}
+                  onClick={() => handleExecute('Analyze my current screen context and tell me what is visible')}
                   className="w-10 h-10 rounded-full bg-slate-900 border border-slate-700/80 flex items-center justify-center text-slate-300 hover:text-cyan-400 hover:border-cyan-400 transition"
-                  title="Attach Context / Screen"
+                  title="Contextual Vision Request"
                 >
                   <Plus className="w-5 h-5" />
                 </button>
 
-                {/* Direct Text Prompt Input */}
                 <input
                   type="text"
                   value={inputText}
@@ -399,7 +416,6 @@ export default function App() {
                   className="flex-1 bg-transparent px-4 text-sm text-slate-100 placeholder-slate-500 focus:outline-none font-sans"
                 />
 
-                {/* Glowing Dedicated Microphone Trigger */}
                 <button
                   type="button"
                   onClick={toggleListening}
@@ -412,7 +428,6 @@ export default function App() {
                   <Mic className="w-5 h-5" />
                 </button>
 
-                {/* Send Button */}
                 <button
                   type="submit"
                   className="w-10 h-10 rounded-full bg-slate-900/80 hover:bg-slate-800 border border-slate-800 flex items-center justify-center text-slate-300 hover:text-cyan-400 transition ml-2"
@@ -423,9 +438,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* 3. RIGHT UTILITY WIDGETS COLUMN */}
+          {/* Right System Status & Clock Widget */}
           <aside className="w-80 p-6 flex flex-col space-y-6 border-l border-slate-800/40 z-20 bg-[#040816]/60 backdrop-blur-xl">
-            {/* Top Digital Clock Widget */}
+            {/* Clock Card */}
             <div className="relative p-5 rounded-3xl bg-gradient-to-br from-[#0c132c]/90 to-[#070b1c]/90 border border-purple-500/30 shadow-[0_0_30px_rgba(147,51,234,0.15)] flex items-center justify-between overflow-hidden">
               <div className="flex flex-col">
                 <span className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-purple-400 to-pink-300 bg-clip-text text-transparent font-mono">
@@ -440,7 +455,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* System Hardware Status Widget */}
+            {/* Hardware Status Card */}
             <div className="p-5 rounded-3xl bg-gradient-to-br from-[#0a0f26]/90 to-[#050818]/90 border border-cyan-500/30 shadow-[0_0_30px_rgba(0,240,255,0.1)] flex flex-col space-y-4">
               <div className="flex items-center space-x-2 text-cyan-400 font-mono text-xs uppercase tracking-wider font-bold">
                 <Activity className="w-4 h-4" />
@@ -499,18 +514,17 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bottom Version Tag */}
             <div className="flex-1 flex items-end justify-end">
               <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-500">
                 <span className="w-6 h-[1px] bg-slate-800" />
-                <span>NOVA v1.0</span>
+                <span>NOVA v2.0 &bull; Continuous Vision</span>
               </div>
             </div>
           </aside>
         </div>
       </div>
 
-      {/* Settings Modal */}
+      {/* Unified Settings Modal */}
       <SettingsModal
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
