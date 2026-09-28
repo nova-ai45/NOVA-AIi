@@ -2,8 +2,16 @@ const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { exec } = require('child_process');
 
-// 1. Hardware acceleration safety
+let si = null;
+try {
+  si = require('systeminformation');
+} catch (e) {
+  console.warn('[Hardware] systeminformation module not found, using OS fallback.');
+}
+
+// 1. Prevent hardware acceleration GPU crashes
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
@@ -45,6 +53,7 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 
 let mainWindow = null;
 
+// Persistent Settings (NO hardcoded Gemini key - user supplies their own in Settings)
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
@@ -107,6 +116,145 @@ function broadcastState(state) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('nova:state', state);
   }
+}
+
+// 4. Laptop Real-Time Hardware Management (Battery, CPU, RAM, Temperature)
+async function fetchFullHardwareStats() {
+  try {
+    if (si) {
+      const [battery, load, mem, temp] = await Promise.all([
+        si.battery().catch(() => ({ hasBattery: false })),
+        si.currentLoad().catch(() => ({ currentLoad: 0 })),
+        si.mem().catch(() => ({ total: 0, available: 0, used: 0 })),
+        si.cpuTemperature().catch(() => ({ main: 0 }))
+      ]);
+
+      const totalMemGb = (mem.total / (1024 ** 3)).toFixed(1);
+      const usedMemGb = ((mem.total - mem.available) / (1024 ** 3)).toFixed(1);
+      const ramPercent = mem.total ? Math.round(((mem.total - mem.available) / mem.total) * 100) : 0;
+
+      return {
+        battery: {
+          hasBattery: battery.hasBattery,
+          percent: battery.percent || 0,
+          isCharging: battery.isCharging || false,
+          acConnected: battery.acConnected || false
+        },
+        cpu: {
+          loadPercent: Math.round(load.currentLoad || 0),
+          tempC: temp.main || 0,
+          cores: os.cpus().length,
+          model: os.cpus()[0]?.model || 'Generic CPU'
+        },
+        ram: {
+          totalGb: totalMemGb,
+          usedGb: usedMemGb,
+          usedPercent: ramPercent
+        }
+      };
+    }
+  } catch (e) {
+    console.warn('[Hardware] Error reading stats:', e.message);
+  }
+
+  // Pure Node.js OS fallback
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  return {
+    battery: { hasBattery: false, percent: 100, isCharging: true, acConnected: true },
+    cpu: { loadPercent: 25, tempC: 45, cores: os.cpus().length, model: os.cpus()[0]?.model || 'Generic' },
+    ram: {
+      totalGb: (totalMem / (1024 ** 3)).toFixed(1),
+      usedGb: (usedMem / (1024 ** 3)).toFixed(1),
+      usedPercent: Math.round((usedMem / totalMem) * 100)
+    }
+  };
+}
+
+// 5. Native Windows Touch, Click, Double-Click, Right-Click & Long-Press
+function nativeClickAt(x, y, button = 'left') {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    const downFlag = button === 'right' ? '0x0008' : '0x0002';
+    const upFlag = button === 'right' ? '0x0010' : '0x0004';
+
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouse {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouse]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds 50;
+      [NativeMouse]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY });
+    });
+  });
+}
+
+function nativeDoubleClickAt(x, y) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseDbl {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseDbl]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      [NativeMouseDbl]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds 80;
+      [NativeMouseDbl]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      [NativeMouseDbl]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY });
+    });
+  });
+}
+
+function nativeLongPressAt(x, y, durationMs = 1200) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    const sleep = Math.max(200, Math.min(5000, Number(durationMs) || 1200));
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseLong {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseLong]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds ${sleep};
+      [NativeMouseLong]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY, duration: sleep });
+    });
+  });
 }
 
 function resolvePreloadPath() {
@@ -207,8 +355,27 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  // IPC Handlers
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
+
+  // Live Hardware Telemetry IPC
+  ipcMain.handle('nova:getHardwareStats', async () => {
+    return await fetchFullHardwareStats();
+  });
+
+  // Native Mouse Control IPCs
+  ipcMain.handle('nova:clickAt', async (_, { x, y, button }) => {
+    return await nativeClickAt(x, y, button || 'left');
+  });
+
+  ipcMain.handle('nova:doubleClickAt', async (_, { x, y }) => {
+    return await nativeDoubleClickAt(x, y);
+  });
+
+  ipcMain.handle('nova:longPressAt', async (_, { x, y, durationMs }) => {
+    return await nativeLongPressAt(x, y, durationMs || 1200);
+  });
 
   ipcMain.handle('nova:stopSpeech', () => {
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
@@ -239,9 +406,9 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir }) => {
-    if (!automation || !automation.createDesktopFile) return { success: false };
-    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
+  ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir, isUpdate }) => {
+    if (!automation || !automation.liveNotepadCodeStream) return { success: false };
+    return await automation.liveNotepadCodeStream(filename, content, targetDir, isUpdate, broadcastLog, mainWindow);
   });
 
   ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
@@ -249,11 +416,10 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // AI Pipeline Execution Handler
+  // Master AI Pipeline Dispatcher
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
-    // Immediately cancel any previous TTS voice playback when a new prompt is initiated
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
     }
@@ -266,8 +432,11 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
+      // Fetch live hardware stats to give AI situational awareness
+      const hardwareStats = await fetchFullHardwareStats();
+
       if (text) broadcastLog('command', `User Directive: "${text}"`);
-      else if (audioBase64) broadcastLog('command', 'User: [Audio Stream Received]');
+      else if (audioBase64) broadcastLog('command', 'User: [Voice Signal Streamed]');
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
@@ -279,6 +448,7 @@ app.whenReady().then(() => {
         visionData,
         settings,
         conversationHistory || [],
+        hardwareStats,
         (streamChunk) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
@@ -286,15 +456,15 @@ app.whenReady().then(() => {
         }
       );
 
-      // Execute physical OS automations (files, browser, mouse clicks)
+      // Execute physical OS automations (files, Notepad typer, mouse clicks, scrolls, web search)
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
-          await automation.executeAction(action, broadcastLog);
+          await automation.executeAction(action, broadcastLog, mainWindow);
         }
       }
 
-      // Generate Microsoft Edge Neural Voice Audio (Swara/Neerja)
+      // Speak back using Microsoft Edge Neural Voice
       let audioResult = null;
       const responseToSpeak = (aiResponse.spokenResponse || '').trim();
 
