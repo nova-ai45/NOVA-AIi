@@ -16,8 +16,8 @@ import {
 
 export default function App() {
   const [logs, setLogs] = useState([
-    { timestamp: 'SYSTEM', message: "nova.core(status=\"ready\", memory=\"sanitized\")" },
-    { timestamp: 'ACTIVE', message: "Acoustic VAD Engine Online |" }
+    { timestamp: 'SYSTEM', message: "nova.audio(tts=\"edge_neural_swara\", status=\"active\")" },
+    { timestamp: 'ACTIVE', message: "Microsoft Edge Neural Voice Engine Online |" }
   ]);
   const [sphereState, setSphereState] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking' | 'executing'
   const [inputText, setInputText] = useState('');
@@ -29,14 +29,12 @@ export default function App() {
   const [micMuted, setMicMuted] = useState(false);
   const [activeTab, setActiveTab] = useState('assistant');
 
-  // Persistent sanitized conversation memory
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('nova_chat_history');
       if (!saved) return [];
       const parsed = JSON.parse(saved);
       if (!Array.isArray(parsed)) return [];
-      // Clean up any empty items or trailing model entries
       const cleaned = parsed.filter(item => item && item.text && item.text.trim() !== '');
       while (cleaned.length > 0 && cleaned[cleaned.length - 1].role === 'model') {
         cleaned.pop();
@@ -49,9 +47,10 @@ export default function App() {
 
   const [cpuUsage, setCpuUsage] = useState(38);
 
-  // Audio Context & Hardware Stream Refs
+  // VAD & Audio Stream Refs
   const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
+  const micAnalyserRef = useRef(null);
+  const playbackAnalyserRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -60,6 +59,8 @@ export default function App() {
   const isRecordingActiveRef = useRef(false);
   const isProcessingRef = useRef(false);
   const consecutiveVoiceFramesRef = useRef(0);
+  const activeAudioElementRef = useRef(null);
+  const mediaElementSourceRef = useRef(null);
   const animFrameRef = useRef(null);
   const terminalEndRef = useRef(null);
 
@@ -89,19 +90,128 @@ export default function App() {
       setSphereState(st);
     });
 
-    startJarvisStyleVAD();
+    startAcousticVAD();
 
     return () => {
       clearInterval(cpuInterval);
       unsubLog();
       unsubState();
-      stopJarvisStyleVAD();
-      cancelNativeSpeech();
+      stopAcousticVAD();
+      stopOngoingSpeechPlayback();
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
   }, []);
 
-  const startJarvisStyleVAD = async () => {
+  // Initializes Web Audio Context for Input (Mic) and Output (Neural Edge-TTS)
+  const getAudioContext = () => {
+    if (!audioContextRef.current) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      audioContextRef.current = new AudioCtx();
+    }
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
+    return audioContextRef.current;
+  };
+
+  // Pure Zero-Overlap Audio Player: Instantly terminates previous voice audio
+  const stopOngoingSpeechPlayback = () => {
+    if (activeAudioElementRef.current) {
+      try {
+        activeAudioElementRef.current.pause();
+        activeAudioElementRef.current.currentTime = 0;
+      } catch (_) {}
+      activeAudioElementRef.current = null;
+    }
+
+    if (window.novaAPI.stopSpeech) {
+      window.novaAPI.stopSpeech();
+    }
+  };
+
+  /**
+   * Plays Microsoft Edge Neural Voice Audio Buffer (Swara / Neerja)
+   * with real-time audio spectrum analysis synchronized to the central orb visualizer.
+   */
+  const playNeuralEdgeVoice = (base64Audio) => {
+    stopOngoingSpeechPlayback();
+
+    if (!base64Audio) {
+      isProcessingRef.current = false;
+      setSphereState('idle');
+      setAudioLevel(0);
+      return;
+    }
+
+    try {
+      const ctx = getAudioContext();
+      const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+      activeAudioElementRef.current = audio;
+
+      // Create playback analyzer if not already initialized
+      if (!playbackAnalyserRef.current) {
+        playbackAnalyserRef.current = ctx.createAnalyser();
+        playbackAnalyserRef.current.fftSize = 256;
+      }
+
+      // Connect HTML5 Audio element to analyser node
+      if (!mediaElementSourceRef.current) {
+        try {
+          mediaElementSourceRef.current = ctx.createMediaElementSource(audio);
+          mediaElementSourceRef.current.connect(playbackAnalyserRef.current);
+          playbackAnalyserRef.current.connect(ctx.destination);
+        } catch (_) {}
+      }
+
+      const pAnalyser = playbackAnalyserRef.current;
+      const pDataArray = new Uint8Array(pAnalyser.frequencyBinCount);
+
+      setSphereState('speaking');
+
+      const monitorPlayback = () => {
+        if (!activeAudioElementRef.current || activeAudioElementRef.current.paused) {
+          return;
+        }
+
+        pAnalyser.getByteFrequencyData(pDataArray);
+        let sum = 0;
+        for (let i = 0; i < pDataArray.length; i++) {
+          sum += pDataArray[i];
+        }
+        const avg = sum / pDataArray.length;
+        setAudioLevel(Math.min(1.0, 0.2 + (avg / 60) * 0.8));
+
+        requestAnimationFrame(monitorPlayback);
+      };
+
+      audio.onplay = () => {
+        setSphereState('speaking');
+        monitorPlayback();
+      };
+
+      const handlePlaybackComplete = () => {
+        setAudioLevel(0);
+        activeAudioElementRef.current = null;
+        isProcessingRef.current = false;
+        setSphereState('idle');
+      };
+
+      audio.onended = handlePlaybackComplete;
+      audio.onerror = handlePlaybackComplete;
+
+      audio.play().catch(() => {
+        handlePlaybackComplete();
+      });
+    } catch (err) {
+      console.error('[Playback] Error playing neural audio:', err);
+      isProcessingRef.current = false;
+      setSphereState('idle');
+      setAudioLevel(0);
+    }
+  };
+
+  // Acoustic RMS VAD Stream: Human voice band detection
+  const startAcousticVAD = async () => {
     try {
       if (mediaStreamRef.current) return;
 
@@ -114,17 +224,10 @@ export default function App() {
       });
       mediaStreamRef.current = stream;
 
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const audioCtx = new AudioCtx();
-      audioContextRef.current = audioCtx;
-
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
-
+      const audioCtx = getAudioContext();
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
-      analyserRef.current = analyser;
+      micAnalyserRef.current = analyser;
 
       const source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyser);
@@ -136,20 +239,24 @@ export default function App() {
       const micDeviceName = audioTrack ? audioTrack.label : 'Microphone';
       setLogs((prev) => [...prev, { timestamp: 'MIC', message: `Hardware Connected: "${micDeviceName}" [LIVE]` }]);
 
-      const SILENCE_TIMEOUT_MS = 1500;
-      const MIN_SPEECH_DURATION_MS = 600;
+      const SILENCE_TIMEOUT_MS = 1400; // Natural conversational pause
+      const MIN_SPEECH_DURATION_MS = 500;
 
       const vadLoop = () => {
-        if (isProcessingRef.current || sphereState === 'speaking' || micMuted) {
+        // If NOVA is currently speaking its neural voice, display visualizer output and skip recording
+        if (sphereState === 'speaking') {
           setLiveMicPercent(0);
-          setAudioLevel(0);
           setIsSpeakingNow(false);
           animFrameRef.current = requestAnimationFrame(vadLoop);
           return;
         }
 
-        if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
+        if (isProcessingRef.current || micMuted) {
+          setLiveMicPercent(0);
+          setAudioLevel(0);
+          setIsSpeakingNow(false);
+          animFrameRef.current = requestAnimationFrame(vadLoop);
+          return;
         }
 
         analyser.getByteTimeDomainData(timeData);
@@ -160,6 +267,7 @@ export default function App() {
         }
         const rms = Math.sqrt(sumSquares / bufferLength);
 
+        // Filter room hum / PC fan
         const cleanRms = Math.max(0, rms - 0.016);
         const volumePercent = Math.min(100, Math.round((cleanRms / 0.18) * 100));
 
@@ -174,6 +282,9 @@ export default function App() {
         const SPEECH_START_THRESHOLD = 0.022;
 
         if (cleanRms > SPEECH_START_THRESHOLD) {
+          // If the user starts speaking while previous audio is playing, instantly cut off speech playback (barge-in)
+          stopOngoingSpeechPlayback();
+
           consecutiveVoiceFramesRef.current++;
 
           if (consecutiveVoiceFramesRef.current >= 3) {
@@ -219,7 +330,7 @@ export default function App() {
 
       vadLoop();
     } catch (err) {
-      console.error('Microphone setup error:', err);
+      console.error('[Mic] Setup error:', err);
       setLogs((prev) => [...prev, { timestamp: 'ERROR', message: `Mic Error: ${err.message}` }]);
     }
   };
@@ -264,7 +375,7 @@ export default function App() {
     }
   };
 
-  const stopJarvisStyleVAD = () => {
+  const stopAcousticVAD = () => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
@@ -288,87 +399,28 @@ export default function App() {
       setSphereState('idle');
     } else {
       setMicMuted(false);
-      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume();
-      }
+      getAudioContext();
     }
   };
 
-  const cancelNativeSpeech = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-  };
-
-  const speakWithFemaleVoice = (text) => {
-    cancelNativeSpeech();
-
-    if (!('speechSynthesis' in window) || !text || !text.trim()) {
-      isProcessingRef.current = false;
-      setSphereState('idle');
-      setAudioLevel(0);
-      return;
-    }
-
-    setSphereState('speaking');
-    window.speechSynthesis.resume();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    window._activeUtterance = utterance;
-
-    utterance.rate = 1.0;
-    utterance.pitch = 1.12;
-
-    const voices = window.speechSynthesis.getVoices();
-    if (voices && voices.length > 0) {
-      const femaleVoice = voices.find(
-        (v) =>
-          v.name.toLowerCase().includes('zira') ||
-          v.name.toLowerCase().includes('heera') ||
-          v.name.toLowerCase().includes('swara') ||
-          v.name.toLowerCase().includes('female') ||
-          v.name.toLowerCase().includes('natural') ||
-          v.lang.includes('hi') ||
-          v.lang.includes('ur')
-      );
-      if (femaleVoice) utterance.voice = femaleVoice;
-    }
-
-    let pulseTimer = setInterval(() => {
-      setAudioLevel(0.35 + Math.random() * 0.45);
-    }, 120);
-
-    const finishVoice = () => {
-      clearInterval(pulseTimer);
-      setAudioLevel(0);
-      window._activeUtterance = null;
-      isProcessingRef.current = false;
-      setSphereState('idle');
-    };
-
-    utterance.onend = finishVoice;
-    utterance.onerror = finishVoice;
-
-    window.speechSynthesis.speak(utterance);
-  };
-
+  // Main Command Pipeline
   const handleExecute = async (overridePrompt = null, audioPayload = null) => {
     const prompt = overridePrompt || inputText;
     if (!prompt.trim() && !audioPayload) return;
 
-    isProcessingRef.current = true;
-    cancelNativeSpeech();
+    // Zero overlap: cancel ongoing TTS audio before sending new query
+    stopOngoingSpeechPlayback();
 
+    isProcessingRef.current = true;
     setInputText('');
     setSphereState('thinking');
 
     if (prompt) {
       setLogs((prev) => [...prev, { timestamp: 'USER', message: prompt }]);
     } else {
-      setLogs((prev) => [...prev, { timestamp: 'VOICE', message: "Voice processed -> Analyzing intent..." }]);
+      setLogs((prev) => [...prev, { timestamp: 'VOICE', message: "Voice captured -> Neural processing..." }]);
     }
 
-    // Ensure snapshot does not end with an orphaned user or model turn
     const cleanHistorySnapshot = chatHistory.filter(item => item && item.text && item.text.trim() !== '');
 
     const result = await window.novaAPI.processCommand({
@@ -381,7 +433,6 @@ export default function App() {
     if (result && result.success) {
       const spokenText = (result.spokenResponse || '').trim();
 
-      // Only append complete, valid user-model pairs to memory
       if (spokenText) {
         setChatHistory((prev) => {
           const userTurn = { role: 'user', text: prompt || '[Voice Directive]' };
@@ -389,7 +440,14 @@ export default function App() {
           return [...prev, userTurn, modelTurn].slice(-20);
         });
 
-        speakWithFemaleVoice(spokenText);
+        // Play the pristine Microsoft Edge Neural Voice Audio (Swara/Neerja)
+        if (result.audioBase64) {
+          playNeuralEdgeVoice(result.audioBase64);
+        } else {
+          isProcessingRef.current = false;
+          setSphereState('idle');
+          setAudioLevel(0);
+        }
       } else {
         isProcessingRef.current = false;
         setSphereState('idle');
@@ -414,9 +472,7 @@ export default function App() {
   return (
     <div
       onClick={() => {
-        if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-          audioContextRef.current.resume();
-        }
+        getAudioContext();
       }}
       className="flex flex-col h-screen w-screen bg-[#07080c] text-slate-100 font-sans overflow-hidden select-none p-4 space-y-4"
     >
@@ -527,7 +583,7 @@ export default function App() {
           <div className="w-full flex justify-between items-center text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold z-10">
             <span className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#ff8800]" />
-              <span>VOICE INTERFACE (ACOUSTIC RMS VAD)</span>
+              <span>VOICE INTERFACE (MS EDGE NEURAL &bull; SWARA)</span>
             </span>
             <span className="opacity-50">• • •</span>
           </div>
@@ -539,7 +595,7 @@ export default function App() {
           <div className="z-10 mb-2 flex items-center space-x-2 px-5 py-1.5 rounded-full bg-[#121522] border border-[#ff7700]/40 text-[#ffaa00] font-mono text-xs shadow-[0_0_15px_rgba(255,119,0,0.2)]">
             <span className={`w-1.5 h-1.5 rounded-full ${sphereState === 'thinking' ? 'bg-cyan-400 animate-ping' : isSpeakingNow ? 'bg-emerald-400 animate-ping' : 'bg-[#ff8800]'}`} />
             <span className="tracking-widest uppercase">
-              ::: {sphereState === 'listening' ? (isSpeakingNow ? 'Listening To Your Voice...' : 'Waiting for Speech...') : sphereState === 'thinking' ? 'NOVA is Thinking...' : sphereState === 'speaking' ? 'Speaking Reply...' : 'Microphone Ready (Speak Anytime)'} :::
+              ::: {sphereState === 'listening' ? (isSpeakingNow ? 'Listening To Your Voice...' : 'Waiting for Speech...') : sphereState === 'thinking' ? 'NOVA is Thinking...' : sphereState === 'speaking' ? 'Speaking (Neural Swara)...' : 'Microphone Ready (Speak Anytime)'} :::
             </span>
           </div>
         </div>
@@ -592,7 +648,7 @@ export default function App() {
             <span className="text-emerald-400">ACTIVE</span>
           </div>
           <div className="text-[11px] font-mono text-slate-500">
-            v3.9.5 • TRUE JARVIS ACOUSTIC
+            v4.0.0 &bull; MS EDGE NEURAL VOICE ACTIVE
           </div>
         </div>
 
