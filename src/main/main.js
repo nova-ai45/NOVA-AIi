@@ -3,10 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// 1. Hardware acceleration safety
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
 
+// 2. Emergency Crash Logger
 function logEmergencyCrash(type, error) {
   const errString = error && error.stack ? error.stack : String(error);
   const logMessage = `[${new Date().toISOString()}] ${type}:\n${errString}\n\n`;
@@ -25,6 +27,7 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
+// 3. Single Instance Lock
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -32,10 +35,12 @@ if (!gotLock) {
 
 let automation = null;
 let vision = null;
+let ttsEngine = null;
 let aiEngine = null;
 
 try { automation = require('./automation'); } catch (e) { logEmergencyCrash('Automation Load', e); }
 try { vision = require('./vision'); } catch (e) { logEmergencyCrash('Vision Load', e); }
+try { ttsEngine = require('./tts_engine'); } catch (e) { logEmergencyCrash('TTS Load', e); }
 try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Load', e); }
 
 let mainWindow = null;
@@ -49,7 +54,7 @@ const DEFAULT_SETTINGS = {
   customBaseURL: 'https://api.groq.com/openai/v1',
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
-  voice: 'female-ur-hi',
+  voice: 'hi-IN-SwaraNeural',
   autoSpeak: true,
   autoVision: true,
   autoFailover: true
@@ -169,6 +174,9 @@ function createWindow() {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('nova:systemShutdown');
     }
+    if (ttsEngine && ttsEngine.cancelActiveTTS) {
+      ttsEngine.cancelActiveTTS();
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -202,6 +210,25 @@ app.whenReady().then(() => {
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
+  ipcMain.handle('nova:stopSpeech', () => {
+    if (ttsEngine && ttsEngine.cancelActiveTTS) {
+      ttsEngine.cancelActiveTTS();
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle('nova:speak', async (_, { text, voice }) => {
+    try {
+      if (!ttsEngine || !ttsEngine.synthesizeNeuralSpeech) return { success: false };
+      const settings = readSettings();
+      const selectedVoice = voice || settings.voice || 'hi-IN-SwaraNeural';
+      const base64Audio = await ttsEngine.synthesizeNeuralSpeech(text, selectedVoice);
+      return { success: true, base64Audio };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('nova:captureScreen', async () => {
     try {
       if (!vision || !vision.captureActiveDisplay) return { success: false, error: 'Vision unavailable' };
@@ -225,6 +252,12 @@ app.whenReady().then(() => {
   // AI Pipeline Execution Handler
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
+
+    // Immediately cancel any previous TTS voice playback when a new prompt is initiated
+    if (ttsEngine && ttsEngine.cancelActiveTTS) {
+      ttsEngine.cancelActiveTTS();
+    }
+
     try {
       broadcastState('thinking');
 
@@ -233,8 +266,8 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      if (text) broadcastLog('command', `Directive: "${text}"`);
-      else if (audioBase64) broadcastLog('command', 'Audio Command -> Dispatched to Gemini');
+      if (text) broadcastLog('command', `User Directive: "${text}"`);
+      else if (audioBase64) broadcastLog('command', 'User: [Audio Stream Received]');
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
@@ -253,7 +286,7 @@ app.whenReady().then(() => {
         }
       );
 
-      // Execute physical mouse clicks, scrolls, browser and files
+      // Execute physical OS automations (files, browser, mouse clicks)
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -261,21 +294,41 @@ app.whenReady().then(() => {
         }
       }
 
+      // Generate Microsoft Edge Neural Voice Audio (Swara/Neerja)
+      let audioResult = null;
+      const responseToSpeak = (aiResponse.spokenResponse || '').trim();
+
+      if (settings.autoSpeak && responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
+        audioResult = await ttsEngine.synthesizeNeuralSpeech(
+          responseToSpeak,
+          settings.voice || 'hi-IN-SwaraNeural'
+        );
+      }
+
       broadcastState('idle');
       return {
         success: true,
-        spokenResponse: aiResponse.spokenResponse || '',
-        actions: aiResponse.actions || []
+        spokenResponse: responseToSpeak,
+        actions: aiResponse.actions || [],
+        audioBase64: audioResult
       };
     } catch (err) {
       broadcastState('idle');
       const spokenError = `Notice: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
       broadcastLog('error', err.message);
 
+      let errorAudio = null;
+      if (ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
+        try {
+          errorAudio = await ttsEngine.synthesizeNeuralSpeech(spokenError, settings.voice || 'hi-IN-SwaraNeural');
+        } catch (_) {}
+      }
+
       return {
         success: false,
         error: err.message,
-        spokenResponse: spokenError
+        spokenResponse: spokenError,
+        audioBase64: errorAudio
       };
     }
   });
