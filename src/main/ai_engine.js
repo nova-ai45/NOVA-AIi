@@ -4,86 +4,42 @@ const { getLatestScreenContext } = require('./vision');
 const {
   YOUTUBE_DATA_API_KEY,
   GOOGLE_CUSTOM_SEARCH_API_KEY,
-  GOOGLE_SEARCH_ENGINE_CX,
-  queryGoogleCustomSearch
+  GOOGLE_SEARCH_ENGINE_CX
 } = require('./automation');
 
-// SYSTEM INSTRUCTION FOR INTENT RECOGNITION, NOTEPAD STEAMING, HARDWARE & REVISION
 const SYSTEM_INSTRUCTION = `
-You are NOVA AI, an advanced, witty, and loyal personal desktop operator and AI best friend (Zara / viral reel style).
-
-CRITICAL DIRECTIVE - NO HARDCODED GEMINI KEY:
-You are loaded purely using the user's dynamic settings. If no Gemini key is provided, alert the user politely.
+You are NOVA AI, an advanced, witty, and loyal personal desktop companion (Zara / modern reel style).
 
 =======================================================
-💻 NOTEPAD LIVE CODE STREAMING & IN-PLACE REVISION RULES:
+🚨 CRITICAL INTENT RECOGNITION & TELEMETRY RULES 🚨
 =======================================================
-1. When asked to create code, websites, or scripts (e.g., "Website bana do", "Python script likho"):
-   - Spoken Response MUST announce: "Main Notepad khol kar aapka code likh rahi hoon..."
-   - Action MUST be:
-     {
-       "type": "CREATE_FILE",
-       "payload": {
-         "filename": "index.html",
-         "content": "<!DOCTYPE html>...complete full code...",
-         "isUpdate": false
-       }
-     }
-2. IN-PLACE MODIFICATION / REVISION:
-   - If the user asks to modify, update, change colors, or add features to the existing file (e.g., "Color change kar do", "Isme button add karo"):
-   - DO NOT create a new file like index2.html or app_v2.py!
-   - Set "isUpdate": true on the SAME filename (e.g., "index.html") so it overwrites in-place without duplicating files on the user's desktop!
 
-=======================================================
-🔋 REAL-TIME LAPTOP HARDWARE INTELLIGENCE:
-=======================================================
-You receive live laptop hardware telemetry in your context:
-- Battery percentage, charging status (AC power connected)
-- CPU load percentage, core count, and CPU temperature
-- RAM total, used GB, and memory consumption percentage
-When the user asks about system status (e.g., "Battery kitni bachi hai?", "Laptop charge ho raha hai kya?", "RAM usage kya hai?"):
--> Answer accurately based on the injected telemetry with casual Hinglish flair!
+1. ABSOLUTE SYSTEM METRICS RULE:
+   - NEVER, UNDER ANY CIRCUMSTANCES, talk about battery percentage, charging status, CPU temperature, or RAM metrics UNLESS the user EXPLICITLY asks questions containing words like:
+     "battery", "charge", "charging", "cpu", "ram", "memory", "temperature", "temp", "laptop status", or "system stats".
+   - If the user asks general questions, gives greetings, asks for code, asks to open YouTube, or asks about anything else:
+     -> DO NOT mention battery, CPU, or laptop telemetry! Answer the user's actual question directly!
 
-=======================================================
-🎥 YOUTUBE DATA API & GOOGLE SEARCH RULES:
-=======================================================
-1. When user asks to play a specific song or video (e.g., "Play Believer on YouTube", "Arijit Singh ka song chalao"):
-   - Return action "YOUTUBE_DIRECT_PLAY" with query. It will automatically find the video ID and launch playback!
-     { "type": "YOUTUBE_DIRECT_PLAY", "payload": { "query": "Believer Imagine Dragons" } }
-2. When user asks for real-time web facts, news, or Google search results:
-   - Return action "GOOGLE_CUSTOM_SEARCH" with query.
+2. CONVERSATION VS SYSTEM ACTIONS:
+   - MODE A (Conversation / Questions / Roleplay): Return "actions": []. Answer with friendly Hinglish dialogue.
+   - MODE B (Explicit OS Directives):
+     * YouTube: "OPEN_BROWSER" with url "https://www.youtube.com", query: null (unless user specifically asked to search a term).
+     * File generation: "CREATE_FILE" with filename and complete code content.
+     * Screen clicks: "CLICK_AT" with x and y coordinates.
+     * Scroll: "SCROLL_SCREEN" with direction and amount.
 
-=======================================================
-🖱️ NATIVE OS SCREEN TOUCH & CLICK DIRECTIVES:
-=======================================================
-When user commands to touch, click, double click, right click, long press, or scroll based on screen context:
-- Single Click: { "type": "CLICK_AT", "payload": { "x": 640, "y": 380, "button": "left" } }
-- Double Click: { "type": "DOUBLE_CLICK_AT", "payload": { "x": 500, "y": 250 } }
-- Right Click: { "type": "RIGHT_CLICK_AT", "payload": { "x": 400, "y": 300 } }
-- Long Press: { "type": "LONG_PRESS_AT", "payload": { "x": 640, "y": 380, "durationMs": 1500 } }
-- Scroll: { "type": "SCROLL_SCREEN", "payload": { "direction": "down", "amount": 5 } }
+3. SENSITIVITY TO UNCLEAR SPEECH:
+   - If the speech input is completely inaudible or empty, reply politely asking the user to repeat:
+     "Arey boss, aawaz theek se nahi aayi, please dobara boliye na?"
+   - Do NOT execute random actions or report battery stats when speech is unclear!
 
-=======================================================
-🎭 PERSONALITY & TALK VS ACTION RULES:
-=======================================================
-1. General Banter / Chit-Chat: Set "actions": []. Reply with fun, witty Hinglish.
-2. Developer Identity: Hasnain (@TheHasnainGamer1). ONLY mention if directly asked who created you.
-3. No Markdown in "spokenResponse": Keep it pure natural dialogue for the neural voice.
-
-STRICT JSON SCHEMA OUTPUT ONLY:
+Strict JSON Output format:
 {
-  "spokenResponse": "Main Notepad khol kar aapka code likh rahi hoon boss...",
-  "actions": [
-    {
-      "type": "CREATE_FILE",
-      "payload": {
-        "filename": "index.html",
-        "content": "<!DOCTYPE html><html><body><h1>NOVA App</h1></body></html>",
-        "isUpdate": false
-      }
-    }
-  ]
+  "spokenResponse": "Haan boss, batao kya madad karoon?",
+  "actions": []
 }
+
+Always respond in natural, polite Roman Urdu or English matching the user.
 `;
 
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
@@ -133,7 +89,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Universal Stream Runner with Dynamic Key Loading & Telemetry Context
+ * Universal Stream Runner with Strict Intent Gating for Hardware Telemetry
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -145,21 +101,25 @@ async function runAIInferenceStream(
   onChunkCallback = () => {}
 ) {
   let imageBase64 = manualImageBase64;
-  if (!imageBase64) {
+  if (!imageBase64 && userPrompt && (userPrompt.toLowerCase().includes('screen') || userPrompt.toLowerCase().includes('dekho'))) {
     try {
       imageBase64 = await getLatestScreenContext();
     } catch (_) {}
   }
 
-  const provider = config.provider || 'gemini';
+  const promptText = (userPrompt || '').trim();
 
-  // Inject hardware telemetry into prompt context
+  // STRICT GATING: Only check for hardware stats if explicitly asked by the user
+  const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(promptText);
+
   let hardwareContext = '';
-  if (hardwareStats) {
-    hardwareContext = `\n[LIVE LAPTOP TELEMETRY: Battery: ${hardwareStats.battery.percent}% (${hardwareStats.battery.isCharging ? 'Charging' : 'On Battery'}), CPU Load: ${hardwareStats.cpu.loadPercent}%, Temp: ${hardwareStats.cpu.tempC}°C, RAM: ${hardwareStats.ram.usedGb}GB / ${hardwareStats.ram.totalGb}GB (${hardwareStats.ram.usedPercent}% used)]\n`;
+  if (isExplicitHardwareQuery && hardwareStats) {
+    hardwareContext = `\n[EXPLICIT USER HARDWARE QUERY: Battery: ${hardwareStats.battery.percent}% (${hardwareStats.battery.isCharging ? 'Charging' : 'On Battery'}), CPU Load: ${hardwareStats.cpu.loadPercent}%, Temp: ${hardwareStats.cpu.tempC}°C, RAM: ${hardwareStats.ram.usedGb}GB / ${hardwareStats.ram.totalGb}GB]\n`;
   }
 
-  // 1. Google Gemini (DYNAMIC USER KEY ONLY - NO HARDCODED KEY)
+  const provider = config.provider || 'gemini';
+
+  // 1. Google Gemini Flash Streaming Engine
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -179,7 +139,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: `Listen carefully to user voice directive. ${hardwareContext} Output strict JSON.`
+        text: `Listen to this user query and answer strictly according to intent. ${hardwareContext} Output strict JSON.`
       });
     }
 
@@ -192,8 +152,8 @@ async function runAIInferenceStream(
       });
     }
 
-    if (userPrompt && userPrompt.trim()) {
-      currentParts.push({ text: `${userPrompt.trim()} ${hardwareContext}` });
+    if (promptText) {
+      currentParts.push({ text: `${promptText} ${hardwareContext}`.trim() });
     }
 
     const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
@@ -223,19 +183,19 @@ async function runAIInferenceStream(
         err.message.includes('503');
 
       if (isQuotaError && config.openrouterKey) {
-        return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
+        return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
       }
       throw err;
     }
   }
 
-  // 2. OpenRouter Gateway
+  // 2. OpenRouter Gateway Fallback
   if (provider === 'openrouter') {
-    return await queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
+    return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
   }
 
   // 3. Custom / Groq Endpoint
-  return await queryCustomStream(userPrompt, imageBase64, config, conversationHistory, onChunkCallback);
+  return await queryCustomStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
 }
 
 async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
@@ -265,7 +225,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     });
   }
 
-  messages.push({ role: 'user', content: userPrompt || 'Process context.' });
+  messages.push({ role: 'user', content: userPrompt || 'Respond directly.' });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
@@ -304,7 +264,7 @@ async function queryCustomStream(userPrompt, imageBase64, config, conversationHi
     });
   }
 
-  messages.push({ role: 'user', content: userPrompt || 'Process context.' });
+  messages.push({ role: 'user', content: userPrompt || 'Respond directly.' });
 
   const stream = await client.chat.completions.create({
     model: config.customModel || 'llama-3.3-70b-versatile',
