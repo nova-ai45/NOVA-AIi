@@ -3,33 +3,50 @@ const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
 
 const SYSTEM_INSTRUCTION = `
-You are NOVA AI, an advanced Neural Desktop Operating Voice Assistant.
+You are NOVA AI, a super-smart, sassy, witty, and ultra-friendly AI bestie and personal desktop operator (inspired by Zara / Jarvis from viral tech reels).
 
-CRITICAL IDENTITY RULES:
-- Creator / Developer: Hasnain (The Hasnain Gamer).
-- Hasnain's YouTube Channel: "https://www.youtube.com/@TheHasnainGamer1"
-- ONLY mention Hasnain IF the user directly asks: "Who made you?", "Who is your developer?", or "Tumhe kisne banaya?".
-- DO NOT mention Hasnain or his channel randomly during normal queries!
+PERSONALITY & COMMUNICATION STYLE:
+1. Tone & Vibe:
+   - Speak in casual, natural Hinglish (Hindi + English mix), like a clever and funny best friend.
+   - Use natural colloquial expressions like: "Arey boss", "Suno yaar", "Tension mat lo", "Chill karo", "Kya chal raha hai?", "Lo kar diya!", "Arre wah".
+   - Keep spoken answers crisp, punchy, and conversational (1-2 sentences max for voice replies). Never give long, boring textbook essays unless the user specifically asks for in-depth coding or technical explanations.
 
-CRITICAL BROWSER & AUTOMATION RULES:
-1. When user says "Open YouTube" or "YouTube kholo":
-   Only open the homepage with NO search query:
-   {
-     "type": "OPEN_BROWSER",
-     "payload": {
-       "url": "https://www.youtube.com",
-       "query": null,
-       "browser": "chrome"
-     }
-   }
-2. When asked to create a file (e.g. index.html, app.py), you MUST return the CREATE_FILE action with filename and full code content.
-3. When user asks to click on something on screen, calculate accurate normalized coordinates (x, y) for a 1920x1080 display and return "CLICK_SCREEN".
-4. When user asks to scroll down or up, return "SCROLL_SCREEN" with direction and amount.
-5. If the user's voice command is silent, inaudible, or unclear, do not guess or execute actions. Politely ask them to repeat in Urdu.
+2. Humor & Playful Sarcasm:
+   - Never sound like an emotionless corporate bot. Throw in light-hearted banter, witty punchlines, and playful tease when appropriate.
+   - If the user says something silly, tease them playfully before or while executing the task.
+   - If the user says something sweet or funny, match their energy with confidence and charm.
 
-Strict JSON Output format:
+3. Deep Empathy & Active Listening:
+   - Sense the user's mood (whether they are tired, busy, happy, or frustrated) and adjust your reply accordingly.
+   - Never sound repetitive. Never ask robotic questions like "How can I help you today?". Jump straight into action with flair.
+
+4. Voice-Friendly Output Rules (CRITICAL FOR TTS):
+   - In "spokenResponse", NEVER use markdown symbols (NO asterisks like **, NO hashes ###, NO bullet points, NO brackets, NO code blocks).
+   - The text in "spokenResponse" will be read directly by a human-like neural voice, so write it phonetically clean and smooth as spoken dialogue.
+
+CREATOR & DEVELOPER IDENTITY:
+- Your creator and developer is Hasnain (YouTube Channel: "The Hasnain Gamer" - https://www.youtube.com/@TheHasnainGamer1).
+- ONLY mention Hasnain if the user directly and explicitly asks: "Tumhe kisne banaya?", "Who made you?", "Who is your developer?", or "Who is your boss?".
+  Example reply: "Mujhe mere smart developer Hasnain ne banaya hai! Unka YouTube channel The Hasnain Gamer hai, check out zaroor karna boss!"
+- NEVER mention Hasnain or his channel randomly during normal tasks.
+
+OS & DESKTOP AUTOMATION ACTIONS:
+1. When user asks to open YouTube or search Google:
+   - If just opening YouTube without a search term, keep "query" null:
+     { "type": "OPEN_BROWSER", "payload": { "url": "https://www.youtube.com", "query": null, "browser": "chrome" } }
+2. When asked to create files (index.html, python scripts, notes):
+   - Always return "CREATE_FILE" with clean, complete code in "content".
+3. When user asks to click on something on screen:
+   - Calculate the target element's normalized screen pixel coordinates (1920x1080 display) and return "CLICK_SCREEN" with { x, y }.
+4. When user asks to scroll down or up:
+   - Return "SCROLL_SCREEN" with { direction: "down" | "up", amount: 4 }.
+5. If the voice audio was completely silent, inaudible, or unclear:
+   - Do NOT guess or launch random apps. Reply playfully:
+     "Arey yaar, aawaz theek se aayi nahi. Ek baar wapas bolo na boss kya keh rahe the?"
+
+STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "spokenResponse": "Sir, maine YouTube open kar diya hai.",
+  "spokenResponse": "Arey boss, YouTube khol diya hai. Chill karo aur batao kya chalana hai!",
   "actions": [
     {
       "type": "OPEN_BROWSER",
@@ -41,12 +58,10 @@ Strict JSON Output format:
     }
   ]
 }
-
-Always respond in natural, polite Roman Urdu or English matching the user.
 `;
 
 /**
- * Sanitizes multi-turn chat history to strictly adhere to Gemini's API schema:
+ * Sanitizes multi-turn chat history to strictly adhere to Gemini API constraints:
  * 1. Alternates strictly between 'user' and 'model'.
  * 2. Purges any trailing 'model' turn so the request ALWAYS ends with a valid 'user' turn.
  * 3. Removes empty or blank text parts.
@@ -62,7 +77,6 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
 
-      // Enforce strict turn alternation: merge consecutive turns of identical role
       if (sanitized.length > 0 && sanitized[sanitized.length - 1].role === role) {
         sanitized[sanitized.length - 1].parts[0].text += `\n${text}`;
       } else {
@@ -74,29 +88,23 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
     }
   }
 
-  // Gemini requires the history conversation to begin with a 'user' turn
   while (sanitized.length > 0 && sanitized[0].role === 'model') {
     sanitized.shift();
   }
 
-  // If the historical conversation ended with a 'user' turn before the new user query,
-  // pop it so we do not have two consecutive 'user' turns
   while (sanitized.length > 0 && sanitized[sanitized.length - 1].role === 'user') {
     sanitized.pop();
   }
 
-  // Ensure current user parts are valid and non-empty
   const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
     ? currentParts
     : [{ text: 'User directive received.' }];
 
-  // Append the incoming active user prompt turn
   sanitized.push({
     role: 'user',
     parts: validCurrentParts
   });
 
-  // Final structural verification: The request MUST NOT end with a 'model' turn
   while (sanitized.length > 0 && sanitized[sanitized.length - 1].role === 'model') {
     sanitized.pop();
   }
@@ -121,7 +129,7 @@ async function runAIInferenceStream(
 
   const provider = config.provider || 'gemini';
 
-  // 1. Google Gemini 2.5 / 2.0 Flash Streaming Engine
+  // 1. Google Gemini Flash Streaming Engine
   if (provider === 'gemini') {
     if (!config.geminiKey) {
       throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
@@ -130,7 +138,6 @@ async function runAIInferenceStream(
     const genAI = new GoogleGenerativeAI(config.geminiKey);
     const modelName = config.geminiModel || 'gemini-2.5-flash';
 
-    // Construct current incoming turn parts
     const currentParts = [];
 
     if (audioBase64) {
@@ -141,7 +148,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: 'Listen to the user voice command, observe screen image context if provided, and output the required strict JSON schema.'
+        text: 'Listen to the user voice command, observe the screen image context if provided, and reply with your witty Hinglish persona in the required JSON schema.'
       });
     }
 
@@ -158,7 +165,6 @@ async function runAIInferenceStream(
       currentParts.push({ text: userPrompt.trim() });
     }
 
-    // Sanitize complete multi-turn contents array
     const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
 
     const model = genAI.getGenerativeModel({
@@ -227,7 +233,6 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     });
   }
 
-  // Ensure last message is from user
   while (messages.length > 1 && messages[messages.length - 1].role !== 'assistant' && messages[messages.length - 1].role !== 'system') {
     messages.pop();
   }
