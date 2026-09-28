@@ -7,17 +7,17 @@ import {
   Send,
   Plus,
   Cpu,
-  Activity,
   Mic,
   MicOff,
   Youtube,
-  ExternalLink
+  ExternalLink,
+  Languages
 } from 'lucide-react';
 
 export default function App() {
   const [logs, setLogs] = useState([
-    { timestamp: 'SYSTEM', message: "nova.audio(tts=\"edge_neural_swara\", status=\"active\")" },
-    { timestamp: 'ACTIVE', message: "Microsoft Edge Neural Voice Engine Online |" }
+    { timestamp: 'SYSTEM', message: "nova.core(status=\"ready\", engine=\"speech_recognition\")" },
+    { timestamp: 'ACTIVE', message: "Speech Engine Initialized | Language: ur-PK / en-US" }
   ]);
   const [sphereState, setSphereState] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking' | 'executing'
   const [inputText, setInputText] = useState('');
@@ -27,6 +27,7 @@ export default function App() {
   const [liveMicPercent, setLiveMicPercent] = useState(0);
   const [isSpeakingNow, setIsSpeakingNow] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
+  const [speechLang, setSpeechLang] = useState('ur-PK'); // 'ur-PK' or 'en-US'
   const [activeTab, setActiveTab] = useState('assistant');
 
   const [chatHistory, setChatHistory] = useState(() => {
@@ -35,7 +36,7 @@ export default function App() {
       if (!saved) return [];
       const parsed = JSON.parse(saved);
       if (!Array.isArray(parsed)) return [];
-      const cleaned = parsed.filter(item => item && item.text && item.text.trim() !== '');
+      const cleaned = parsed.filter((item) => item && item.text && item.text.trim() !== '');
       while (cleaned.length > 0 && cleaned[cleaned.length - 1].role === 'model') {
         cleaned.pop();
       }
@@ -47,22 +48,14 @@ export default function App() {
 
   const [cpuUsage, setCpuUsage] = useState(38);
 
-  // VAD & Audio Stream Refs
-  const audioContextRef = useRef(null);
-  const micAnalyserRef = useRef(null);
-  const playbackAnalyserRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  // Speech Recognition & State Refs
+  const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
-  const speechStartTimeRef = useRef(0);
-  const isRecordingActiveRef = useRef(false);
+  const accumulatedTranscriptRef = useRef('');
+  const isRecognitionActiveRef = useRef(false);
   const isProcessingRef = useRef(false);
-  const consecutiveVoiceFramesRef = useRef(0);
-  const activeAudioElementRef = useRef(null);
-  const mediaElementSourceRef = useRef(null);
-  const animFrameRef = useRef(null);
   const terminalEndRef = useRef(null);
+  const activeAudioElementRef = useRef(null);
 
   useEffect(() => {
     try {
@@ -79,6 +72,9 @@ export default function App() {
       const localCfg = localStorage.getItem('nova_persistent_config');
       const merged = { ...(localCfg ? JSON.parse(localCfg) : {}), ...cfg };
       setSettings(merged);
+      if (merged.recognitionLang) {
+        setSpeechLang(merged.recognitionLang);
+      }
     });
 
     const unsubLog = window.novaAPI.onLog((log) => {
@@ -90,31 +86,163 @@ export default function App() {
       setSphereState(st);
     });
 
-    startAcousticVAD();
+    startSpeechRecognition();
 
     return () => {
       clearInterval(cpuInterval);
       unsubLog();
       unsubState();
-      stopAcousticVAD();
+      stopSpeechRecognition();
       stopOngoingSpeechPlayback();
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, []);
+  }, [speechLang]);
 
-  // Initializes Web Audio Context for Input (Mic) and Output (Neural Edge-TTS)
-  const getAudioContext = () => {
-    if (!audioContextRef.current) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      audioContextRef.current = new AudioCtx();
+  // 1. Web Speech API Engine with Strict Accuracy and Language Tuning
+  const startSpeechRecognition = () => {
+    const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechConstructor) {
+      console.error("[Voice Input]: Web Speech API is not supported in this environment.");
+      return;
     }
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (_) {}
     }
-    return audioContextRef.current;
+
+    try {
+      const recognition = new SpeechConstructor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = speechLang; // Explicitly set to 'ur-PK' or 'en-US'
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        isRecognitionActiveRef.current = true;
+        if (!isProcessingRef.current && !micMuted) {
+          setSphereState('idle');
+        }
+      };
+
+      recognition.onresult = (event) => {
+        if (isProcessingRef.current || micMuted) return;
+
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const item = event.results[i][0];
+          if (item && item.transcript) {
+            if (event.results[i].isFinal) {
+              finalTranscript += item.transcript + ' ';
+            } else {
+              interimTranscript += item.transcript;
+            }
+          }
+        }
+
+        const rawTranscript = (finalTranscript || interimTranscript);
+        // Clean and trim string
+        const cleanTranscript = rawTranscript.trim().replace(/\s+/g, ' ');
+
+        if (cleanTranscript.length > 0) {
+          accumulatedTranscriptRef.current = cleanTranscript;
+          setIsSpeakingNow(true);
+          setSphereState('listening');
+          setAudioLevel(0.5);
+          setLiveMicPercent(85);
+
+          // Log live recognized text
+          console.log("[Voice Input Transcript (Live)]:", cleanTranscript);
+
+          // Reset silence timer on every spoken syllable
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+          }
+
+          // 1.0 second silence debounce threshold
+          silenceTimerRef.current = setTimeout(() => {
+            const finalPrompt = accumulatedTranscriptRef.current.trim();
+            accumulatedTranscriptRef.current = '';
+            setIsSpeakingNow(false);
+            setLiveMicPercent(0);
+            setAudioLevel(0);
+
+            if (finalPrompt.length > 0 && !isProcessingRef.current) {
+              console.log("[Voice Input Transcript (Final Dispatched)]:", finalPrompt);
+              try {
+                recognition.stop();
+              } catch (_) {}
+              handleExecute(finalPrompt);
+            }
+          }, 1000);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        if (event.error !== 'no-speech' && event.error !== 'aborted') {
+          console.warn("[Voice Input Error]:", event.error);
+        }
+      };
+
+      recognition.onend = () => {
+        isRecognitionActiveRef.current = false;
+        // Auto-restart if not muted and not currently executing/speaking
+        if (!isProcessingRef.current && !micMuted) {
+          setTimeout(() => {
+            try {
+              recognition.start();
+            } catch (_) {}
+          }, 200);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn("[Voice Input]: Recognition start warning:", e.message);
+      }
+    } catch (err) {
+      console.error("[Voice Input]: Setup failure:", err);
+    }
   };
 
-  // Pure Zero-Overlap Audio Player: Instantly terminates previous voice audio
+  const stopSpeechRecognition = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (_) {}
+      isRecognitionActiveRef.current = false;
+    }
+  };
+
+  const toggleMicMute = () => {
+    if (!micMuted) {
+      setMicMuted(true);
+      stopSpeechRecognition();
+      setSphereState('idle');
+      setAudioLevel(0);
+      setLiveMicPercent(0);
+      setIsSpeakingNow(false);
+    } else {
+      setMicMuted(false);
+      startSpeechRecognition();
+    }
+  };
+
+  const toggleLanguage = () => {
+    const nextLang = speechLang === 'ur-PK' ? 'en-US' : 'ur-PK';
+    setSpeechLang(nextLang);
+    setLogs((prev) => [...prev, { timestamp: 'LANG', message: `Speech recognition language set to: ${nextLang}` }]);
+  };
+
+  // 2. Audio Playback Handler
   const stopOngoingSpeechPlayback = () => {
     if (activeAudioElementRef.current) {
       try {
@@ -123,311 +251,85 @@ export default function App() {
       } catch (_) {}
       activeAudioElementRef.current = null;
     }
-
     if (window.novaAPI.stopSpeech) {
       window.novaAPI.stopSpeech();
     }
   };
 
-  /**
-   * Plays Microsoft Edge Neural Voice Audio Buffer (Swara / Neerja)
-   * with real-time audio spectrum analysis synchronized to the central orb visualizer.
-   */
-  const playNeuralEdgeVoice = (base64Audio) => {
+  const playNeuralVoice = (base64Audio) => {
     stopOngoingSpeechPlayback();
 
     if (!base64Audio) {
-      isProcessingRef.current = false;
-      setSphereState('idle');
-      setAudioLevel(0);
+      finishExecutionTurn();
       return;
     }
 
     try {
-      const ctx = getAudioContext();
       const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
       activeAudioElementRef.current = audio;
 
-      // Create playback analyzer if not already initialized
-      if (!playbackAnalyserRef.current) {
-        playbackAnalyserRef.current = ctx.createAnalyser();
-        playbackAnalyserRef.current.fftSize = 256;
-      }
-
-      // Connect HTML5 Audio element to analyser node
-      if (!mediaElementSourceRef.current) {
-        try {
-          mediaElementSourceRef.current = ctx.createMediaElementSource(audio);
-          mediaElementSourceRef.current.connect(playbackAnalyserRef.current);
-          playbackAnalyserRef.current.connect(ctx.destination);
-        } catch (_) {}
-      }
-
-      const pAnalyser = playbackAnalyserRef.current;
-      const pDataArray = new Uint8Array(pAnalyser.frequencyBinCount);
-
       setSphereState('speaking');
-
-      const monitorPlayback = () => {
-        if (!activeAudioElementRef.current || activeAudioElementRef.current.paused) {
-          return;
-        }
-
-        pAnalyser.getByteFrequencyData(pDataArray);
-        let sum = 0;
-        for (let i = 0; i < pDataArray.length; i++) {
-          sum += pDataArray[i];
-        }
-        const avg = sum / pDataArray.length;
-        setAudioLevel(Math.min(1.0, 0.2 + (avg / 60) * 0.8));
-
-        requestAnimationFrame(monitorPlayback);
-      };
 
       audio.onplay = () => {
         setSphereState('speaking');
-        monitorPlayback();
+        setAudioLevel(0.65);
       };
 
-      const handlePlaybackComplete = () => {
-        setAudioLevel(0);
+      const onAudioFinished = () => {
         activeAudioElementRef.current = null;
-        isProcessingRef.current = false;
-        setSphereState('idle');
+        setAudioLevel(0);
+        finishExecutionTurn();
       };
 
-      audio.onended = handlePlaybackComplete;
-      audio.onerror = handlePlaybackComplete;
+      audio.onended = onAudioFinished;
+      audio.onerror = onAudioFinished;
 
       audio.play().catch(() => {
-        handlePlaybackComplete();
+        onAudioFinished();
       });
-    } catch (err) {
-      console.error('[Playback] Error playing neural audio:', err);
-      isProcessingRef.current = false;
-      setSphereState('idle');
-      setAudioLevel(0);
+    } catch (e) {
+      console.error("[Voice Playback]: Error playing audio response:", e);
+      finishExecutionTurn();
     }
   };
 
-  // Acoustic RMS VAD Stream: Human voice band detection
-  const startAcousticVAD = async () => {
-    try {
-      if (mediaStreamRef.current) return;
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      mediaStreamRef.current = stream;
-
-      const audioCtx = getAudioContext();
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      micAnalyserRef.current = analyser;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      source.connect(analyser);
-
-      const bufferLength = analyser.fftSize;
-      const timeData = new Uint8Array(bufferLength);
-
-      const audioTrack = stream.getAudioTracks()[0];
-      const micDeviceName = audioTrack ? audioTrack.label : 'Microphone';
-      setLogs((prev) => [...prev, { timestamp: 'MIC', message: `Hardware Connected: "${micDeviceName}" [LIVE]` }]);
-
-      const SILENCE_TIMEOUT_MS = 1400; // Natural conversational pause
-      const MIN_SPEECH_DURATION_MS = 500;
-
-      const vadLoop = () => {
-        // If NOVA is currently speaking its neural voice, display visualizer output and skip recording
-        if (sphereState === 'speaking') {
-          setLiveMicPercent(0);
-          setIsSpeakingNow(false);
-          animFrameRef.current = requestAnimationFrame(vadLoop);
-          return;
-        }
-
-        if (isProcessingRef.current || micMuted) {
-          setLiveMicPercent(0);
-          setAudioLevel(0);
-          setIsSpeakingNow(false);
-          animFrameRef.current = requestAnimationFrame(vadLoop);
-          return;
-        }
-
-        analyser.getByteTimeDomainData(timeData);
-        let sumSquares = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          const norm = (timeData[i] - 128) / 128;
-          sumSquares += norm * norm;
-        }
-        const rms = Math.sqrt(sumSquares / bufferLength);
-
-        // Filter room hum / PC fan
-        const cleanRms = Math.max(0, rms - 0.016);
-        const volumePercent = Math.min(100, Math.round((cleanRms / 0.18) * 100));
-
-        setLiveMicPercent(volumePercent);
-
-        if (volumePercent > 0) {
-          setAudioLevel(Math.min(1.0, 0.15 + (volumePercent / 100) * 0.85));
-        } else {
-          setAudioLevel(0);
-        }
-
-        const SPEECH_START_THRESHOLD = 0.022;
-
-        if (cleanRms > SPEECH_START_THRESHOLD) {
-          // If the user starts speaking while previous audio is playing, instantly cut off speech playback (barge-in)
-          stopOngoingSpeechPlayback();
-
-          consecutiveVoiceFramesRef.current++;
-
-          if (consecutiveVoiceFramesRef.current >= 3) {
-            setIsSpeakingNow(true);
-
-            if (!isRecordingActiveRef.current) {
-              isRecordingActiveRef.current = true;
-              speechStartTimeRef.current = Date.now();
-              setSphereState('listening');
-              startRecordingAudioChunks(stream);
-            }
-
-            if (silenceTimerRef.current) {
-              clearTimeout(silenceTimerRef.current);
-              silenceTimerRef.current = null;
-            }
-          }
-        } else {
-          consecutiveVoiceFramesRef.current = 0;
-          setIsSpeakingNow(false);
-
-          if (isRecordingActiveRef.current && !silenceTimerRef.current) {
-            silenceTimerRef.current = setTimeout(() => {
-              const totalSpeechTime = Date.now() - speechStartTimeRef.current;
-              silenceTimerRef.current = null;
-              isRecordingActiveRef.current = false;
-
-              if (totalSpeechTime >= MIN_SPEECH_DURATION_MS) {
-                finishAndSubmitAudio();
-              } else {
-                if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                  mediaRecorderRef.current.stop();
-                }
-                setSphereState('idle');
-                setAudioLevel(0);
-              }
-            }, SILENCE_TIMEOUT_MS);
-          }
-        }
-
-        animFrameRef.current = requestAnimationFrame(vadLoop);
-      };
-
-      vadLoop();
-    } catch (err) {
-      console.error('[Mic] Setup error:', err);
-      setLogs((prev) => [...prev, { timestamp: 'ERROR', message: `Mic Error: ${err.message}` }]);
+  const finishExecutionTurn = () => {
+    isProcessingRef.current = false;
+    setSphereState('idle');
+    setAudioLevel(0);
+    // Restart recognition safely
+    if (!micMuted && recognitionRef.current && !isRecognitionActiveRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch (_) {}
     }
   };
 
-  const startRecordingAudioChunks = (stream) => {
-    try {
-      audioChunksRef.current = [];
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType: mime });
+  // 3. User Query Pipeline (Text & Voice routing to AI)
+  const handleExecute = async (overridePrompt = null) => {
+    const prompt = (overridePrompt || inputText || '').trim();
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      recorder.start(80);
-      mediaRecorderRef.current = recorder;
-    } catch (_) {}
-  };
-
-  const finishAndSubmitAudio = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size > 800) {
-          const reader = new FileReader();
-          reader.readAsDataURL(audioBlob);
-          reader.onloadend = () => {
-            const base64Audio = reader.result.split(',')[1];
-            handleExecute(null, base64Audio);
-          };
-        } else {
-          setSphereState('idle');
-          setAudioLevel(0);
-        }
-      };
-      mediaRecorderRef.current.stop();
-    } else {
-      setSphereState('idle');
-      setAudioLevel(0);
+    // If no speech or empty prompt, do NOT fallback to battery/CPU metrics!
+    if (!prompt) {
+      setLogs((prev) => [...prev, { timestamp: 'WARN', message: "No speech recognized. Please speak your query." }]);
+      finishExecutionTurn();
+      return;
     }
-  };
 
-  const stopAcousticVAD = () => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-    }
-  };
-
-  const toggleMicMute = () => {
-    if (!micMuted) {
-      setMicMuted(true);
-      setLiveMicPercent(0);
-      setAudioLevel(0);
-      setIsSpeakingNow(false);
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-      setSphereState('idle');
-    } else {
-      setMicMuted(false);
-      getAudioContext();
-    }
-  };
-
-  // Main Command Pipeline
-  const handleExecute = async (overridePrompt = null, audioPayload = null) => {
-    const prompt = overridePrompt || inputText;
-    if (!prompt.trim() && !audioPayload) return;
-
-    // Zero overlap: cancel ongoing TTS audio before sending new query
     stopOngoingSpeechPlayback();
-
     isProcessingRef.current = true;
     setInputText('');
     setSphereState('thinking');
 
-    if (prompt) {
-      setLogs((prev) => [...prev, { timestamp: 'USER', message: prompt }]);
-    } else {
-      setLogs((prev) => [...prev, { timestamp: 'VOICE', message: "Voice captured -> Neural processing..." }]);
-    }
+    console.log("[Routing to AI Engine]:", prompt);
+    setLogs((prev) => [...prev, { timestamp: 'USER', message: prompt }]);
 
-    const cleanHistorySnapshot = chatHistory.filter(item => item && item.text && item.text.trim() !== '');
+    const cleanHistorySnapshot = chatHistory.filter((item) => item && item.text && item.text.trim() !== '');
 
     const result = await window.novaAPI.processCommand({
       text: prompt,
-      audioBase64: audioPayload,
       conversationHistory: cleanHistorySnapshot,
-      includeVision: true
+      includeVision: prompt.toLowerCase().includes('screen') || prompt.toLowerCase().includes('dekho')
     });
 
     if (result && result.success) {
@@ -435,28 +337,21 @@ export default function App() {
 
       if (spokenText) {
         setChatHistory((prev) => {
-          const userTurn = { role: 'user', text: prompt || '[Voice Directive]' };
+          const userTurn = { role: 'user', text: prompt };
           const modelTurn = { role: 'model', text: spokenText };
           return [...prev, userTurn, modelTurn].slice(-20);
         });
 
-        // Play the pristine Microsoft Edge Neural Voice Audio (Swara/Neerja)
         if (result.audioBase64) {
-          playNeuralEdgeVoice(result.audioBase64);
+          playNeuralVoice(result.audioBase64);
         } else {
-          isProcessingRef.current = false;
-          setSphereState('idle');
-          setAudioLevel(0);
+          finishExecutionTurn();
         }
       } else {
-        isProcessingRef.current = false;
-        setSphereState('idle');
-        setAudioLevel(0);
+        finishExecutionTurn();
       }
     } else {
-      isProcessingRef.current = false;
-      setSphereState('idle');
-      setAudioLevel(0);
+      finishExecutionTurn();
     }
   };
 
@@ -470,12 +365,7 @@ export default function App() {
   };
 
   return (
-    <div
-      onClick={() => {
-        getAudioContext();
-      }}
-      className="flex flex-col h-screen w-screen bg-[#07080c] text-slate-100 font-sans overflow-hidden select-none p-4 space-y-4"
-    >
+    <div className="flex flex-col h-screen w-screen bg-[#07080c] text-slate-100 font-sans overflow-hidden select-none p-4 space-y-4">
       {/* 1. TOP BAR */}
       <header className="flex items-center justify-between px-6 py-3.5 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_25px_rgba(255,119,0,0.15)] backdrop-blur-xl">
         <div className="flex items-center space-x-3.5">
@@ -493,7 +383,18 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center space-x-5">
+        <div className="flex items-center space-x-4">
+          {/* Language Switcher Badge (ur-PK / en-US) */}
+          <button
+            onClick={toggleLanguage}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#141824] hover:bg-[#1c2234] border border-[#ff7700]/30 text-xs font-mono text-[#ffaa00] transition"
+            title="Toggle Recognition Language"
+          >
+            <Languages className="w-3.5 h-3.5 text-[#ff8800]" />
+            <span>{speechLang}</span>
+          </button>
+
+          {/* YouTube Creator Channel Link */}
           <button
             onClick={openHasnainYouTubeInChrome}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-[#ff7700] hover:from-red-500 hover:to-[#ff9900] text-white text-xs font-mono font-bold transition shadow-[0_0_15px_rgba(255,119,0,0.4)] cursor-pointer"
@@ -504,11 +405,13 @@ export default function App() {
             <ExternalLink className="w-3.5 h-3.5 opacity-80" />
           </button>
 
+          {/* Online Status */}
           <div className="flex items-center space-x-2 text-xs font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981] animate-ping" />
             <span className="text-emerald-400 font-semibold tracking-wide">ONLINE</span>
           </div>
 
+          {/* Microphone Mute Toggle */}
           <button
             onClick={toggleMicMute}
             className={`p-2 rounded-xl border transition cursor-pointer ${
@@ -527,7 +430,7 @@ export default function App() {
 
       {/* 2. MAIN GRID */}
       <div className="flex-1 grid grid-cols-12 gap-4 overflow-hidden">
-        {/* NAVIGATION & VU METER */}
+        {/* LEFT COLUMN: NAVIGATION & MIC VU METER */}
         <div className="col-span-12 md:col-span-2 flex flex-col p-4 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_20px_rgba(255,119,0,0.1)] backdrop-blur-xl justify-between">
           <div>
             <div className="text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold mb-4 flex items-center space-x-1.5">
@@ -558,18 +461,19 @@ export default function App() {
             </div>
           </div>
 
+          {/* Voice Input Activity Gauge */}
           <div className="p-3.5 rounded-xl bg-[#121522] border border-slate-800 space-y-2">
             <div className="flex justify-between items-center text-[10px] font-mono">
               <span className="text-slate-400">VOICE INPUT</span>
               <span className={isSpeakingNow ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
-                {micMuted ? 'MUTED' : isSpeakingNow ? 'SPEAKING' : 'SILENT'}
+                {micMuted ? 'MUTED' : isSpeakingNow ? 'CAPTURING' : 'READY'}
               </span>
             </div>
             <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-75 ${
+                className={`h-full rounded-full transition-all duration-100 ${
                   isSpeakingNow
-                    ? 'bg-emerald-400 shadow-[0_0_8px_#10b981]'
+                    ? 'bg-gradient-to-r from-emerald-400 to-[#ffaa00] shadow-[0_0_8px_#10b981]'
                     : 'bg-[#ff7700]'
                 }`}
                 style={{ width: `${micMuted ? 0 : liveMicPercent}%` }}
@@ -578,14 +482,14 @@ export default function App() {
           </div>
         </div>
 
-        {/* VOICE & RADAR INTERFACE */}
+        {/* CENTER COLUMN: VOICE INTERFACE */}
         <div className="col-span-12 md:col-span-7 flex flex-col items-center justify-between p-4 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_30px_rgba(255,119,0,0.15)] backdrop-blur-xl relative overflow-hidden">
           <div className="w-full flex justify-between items-center text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold z-10">
             <span className="flex items-center space-x-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#ff8800]" />
               <span>VOICE INTERFACE (MS EDGE NEURAL &bull; SWARA)</span>
             </span>
-            <span className="opacity-50">• • •</span>
+            <span className="text-slate-500 font-mono text-[10px]">Lang: {speechLang}</span>
           </div>
 
           <div className="w-full flex-1 flex items-center justify-center relative">
@@ -595,12 +499,12 @@ export default function App() {
           <div className="z-10 mb-2 flex items-center space-x-2 px-5 py-1.5 rounded-full bg-[#121522] border border-[#ff7700]/40 text-[#ffaa00] font-mono text-xs shadow-[0_0_15px_rgba(255,119,0,0.2)]">
             <span className={`w-1.5 h-1.5 rounded-full ${sphereState === 'thinking' ? 'bg-cyan-400 animate-ping' : isSpeakingNow ? 'bg-emerald-400 animate-ping' : 'bg-[#ff8800]'}`} />
             <span className="tracking-widest uppercase">
-              ::: {sphereState === 'listening' ? (isSpeakingNow ? 'Listening To Your Voice...' : 'Waiting for Speech...') : sphereState === 'thinking' ? 'NOVA is Thinking...' : sphereState === 'speaking' ? 'Speaking (Neural Swara)...' : 'Microphone Ready (Speak Anytime)'} :::
+              ::: {sphereState === 'listening' ? 'Listening...' : sphereState === 'thinking' ? 'NOVA is Thinking...' : sphereState === 'speaking' ? 'Speaking...' : 'Microphone Ready'} :::
             </span>
           </div>
         </div>
 
-        {/* SYSTEM STATS */}
+        {/* RIGHT COLUMN: SYSTEM STATS */}
         <div className="col-span-12 md:col-span-3 flex flex-col p-4 bg-[#0d0f17]/90 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_20px_rgba(255,119,0,0.1)] backdrop-blur-xl">
           <div className="text-[11px] font-mono tracking-widest text-[#ff8800] uppercase font-bold mb-4 flex items-center space-x-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-[#ff8800]" />
@@ -638,7 +542,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* 3. COMMAND CONSOLE */}
+      {/* 3. COMMAND CONSOLE & TEXT INPUT */}
       <div className="h-44 flex flex-col p-4 bg-[#0d0f17]/95 rounded-2xl border border-[#ff7700]/30 shadow-[0_0_25px_rgba(255,119,0,0.15)] backdrop-blur-xl">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800/80 mb-2">
           <div className="flex items-center space-x-2 text-[11px] font-mono tracking-widest font-bold">
@@ -648,7 +552,7 @@ export default function App() {
             <span className="text-emerald-400">ACTIVE</span>
           </div>
           <div className="text-[11px] font-mono text-slate-500">
-            v4.0.0 &bull; MS EDGE NEURAL VOICE ACTIVE
+            v4.1.0 &bull; VOICE & INTENT ROUTER READY
           </div>
         </div>
 
