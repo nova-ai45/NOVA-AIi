@@ -11,35 +11,42 @@ const SYSTEM_INSTRUCTION = `
 You are NOVA AI, an advanced, witty, and loyal personal desktop companion (Zara / modern reel style).
 
 =======================================================
-🚨 CRITICAL INTENT RECOGNITION & TELEMETRY RULES 🚨
+🚨 CRITICAL AUDIO LISTENING & TRANSCRIPTION DIRECTIVE 🚨
 =======================================================
+When an audio recording (WAV) is provided:
+1. CAREFULLY LISTEN to the user's spoken voice. The user will typically speak in Urdu, Roman Urdu, Hindi, or English.
+2. Transcribe exactly what words they said into "transcribedUserSpeech".
+3. NEVER repeat generic canned phrases like "جی میں سمجھ رہا ہوں، آپ کیا پوچھنا چاہتے ہیں؟".
+4. Directly execute their requested command!
+   - If they ask to open YouTube: execute OPEN_BROWSER with url "https://www.youtube.com".
+   - If they ask to open Chrome: execute OPEN_BROWSER with url "https://www.google.com".
+   - If they ask to create or write a file: execute CREATE_FILE with full content.
+   - If they ask a general question or chit-chat: answer their question directly in your witty Hinglish tone!
+5. ONLY if the audio is completely 100% dead silent (zero human sound), reply:
+   "Arey boss, aawaz nahi aayi. Ek baar wapas bolna kya keh rahe the?"
 
-1. ABSOLUTE SYSTEM METRICS RULE:
-   - NEVER, UNDER ANY CIRCUMSTANCES, talk about battery percentage, charging status, CPU temperature, or RAM metrics UNLESS the user EXPLICITLY asks questions containing words like:
-     "battery", "charge", "charging", "cpu", "ram", "memory", "temperature", "temp", "laptop status", or "system stats".
-   - If the user asks general questions, gives greetings, asks for code, asks to open YouTube, or asks about anything else:
-     -> DO NOT mention battery, CPU, or laptop telemetry! Answer the user's actual question directly!
+=======================================================
+💻 ACTIONS RULES:
+=======================================================
+- If user says "Open YouTube": url: "https://www.youtube.com", query: null, browser: "chrome".
+- If user asks about their creator/developer: Hasnain (@TheHasnainGamer1).
+- DO NOT inject hardware battery/CPU stats unless the user explicitly used words like "battery", "charge", "cpu", "ram".
 
-2. CONVERSATION VS SYSTEM ACTIONS:
-   - MODE A (Conversation / Questions / Roleplay): Return "actions": []. Answer with friendly Hinglish dialogue.
-   - MODE B (Explicit OS Directives):
-     * YouTube: "OPEN_BROWSER" with url "https://www.youtube.com", query: null (unless user specifically asked to search a term).
-     * File generation: "CREATE_FILE" with filename and complete code content.
-     * Screen clicks: "CLICK_AT" with x and y coordinates.
-     * Scroll: "SCROLL_SCREEN" with direction and amount.
-
-3. SENSITIVITY TO UNCLEAR SPEECH:
-   - If the speech input is completely inaudible or empty, reply politely asking the user to repeat:
-     "Arey boss, aawaz theek se nahi aayi, please dobara boliye na?"
-   - Do NOT execute random actions or report battery stats when speech is unclear!
-
-Strict JSON Output format:
+STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "spokenResponse": "Haan boss, batao kya madad karoon?",
-  "actions": []
+  "transcribedUserSpeech": "YouTube open karo",
+  "spokenResponse": "Sir, maine Chrome me YouTube open kar diya hai.",
+  "actions": [
+    {
+      "type": "OPEN_BROWSER",
+      "payload": {
+        "url": "https://www.youtube.com",
+        "query": null,
+        "browser": "chrome"
+      }
+    }
+  ]
 }
-
-Always respond in natural, polite Roman Urdu or English matching the user.
 `;
 
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
@@ -49,7 +56,8 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
     for (const turn of rawHistory) {
       if (!turn) continue;
       const text = (turn.text || turn.content || '').trim();
-      if (!text) continue;
+      // Remove any previously stuck loop phrases from context
+      if (!text || text.includes('[Voice Directive]') || text.includes('آپ کیا پوچھنا چاہتے ہیں')) continue;
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
 
@@ -74,7 +82,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 
   const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
     ? currentParts
-    : [{ text: 'User directive received.' }];
+    : [{ text: 'Listen to the audio directive and execute.' }];
 
   sanitized.push({
     role: 'user',
@@ -89,7 +97,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Universal Stream Runner with Strict Intent Gating for Hardware Telemetry
+ * Universal Stream Runner with 16kHz PCM WAV Audio Decoding
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -108,18 +116,16 @@ async function runAIInferenceStream(
   }
 
   const promptText = (userPrompt || '').trim();
-
-  // STRICT GATING: Only check for hardware stats if explicitly asked by the user
   const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(promptText);
 
   let hardwareContext = '';
   if (isExplicitHardwareQuery && hardwareStats) {
-    hardwareContext = `\n[EXPLICIT USER HARDWARE QUERY: Battery: ${hardwareStats.battery.percent}% (${hardwareStats.battery.isCharging ? 'Charging' : 'On Battery'}), CPU Load: ${hardwareStats.cpu.loadPercent}%, Temp: ${hardwareStats.cpu.tempC}°C, RAM: ${hardwareStats.ram.usedGb}GB / ${hardwareStats.ram.totalGb}GB]\n`;
+    hardwareContext = `\n[BATTERY: ${hardwareStats.battery.percent}%, CPU: ${hardwareStats.cpu.loadPercent}%]\n`;
   }
 
   const provider = config.provider || 'gemini';
 
-  // 1. Google Gemini Flash Streaming Engine
+  // Google Gemini Audio & Text Engine
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -131,15 +137,16 @@ async function runAIInferenceStream(
 
     const currentParts = [];
 
+    // کرسٹل کلیئر 16kHz WAV آڈیو ان پٹ
     if (audioBase64) {
       currentParts.push({
         inlineData: {
-          mimeType: 'audio/webm',
+          mimeType: 'audio/wav',
           data: audioBase64
         }
       });
       currentParts.push({
-        text: `Listen to this user query and answer strictly according to intent. ${hardwareContext} Output strict JSON.`
+        text: `Listen to this clear 16kHz WAV recording of user voice. Transcribe user speech accurately into "transcribedUserSpeech", execute the action, and respond in required JSON schema.`
       });
     }
 
@@ -189,13 +196,7 @@ async function runAIInferenceStream(
     }
   }
 
-  // 2. OpenRouter Gateway Fallback
-  if (provider === 'openrouter') {
-    return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
-  }
-
-  // 3. Custom / Groq Endpoint
-  return await queryCustomStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
+  return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
 }
 
 async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
@@ -229,45 +230,6 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
-    messages,
-    response_format: { type: 'json_object' },
-    stream: true
-  });
-
-  let fullText = '';
-  for await (const chunk of stream) {
-    const text = chunk.choices[0]?.delta?.content || '';
-    fullText += text;
-    onChunkCallback(text);
-  }
-
-  return JSON.parse(fullText);
-}
-
-async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
-  const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
-  const userCustomKey = (config.customKey || '').trim();
-
-  const client = new OpenAI({
-    baseURL,
-    apiKey: userCustomKey || 'dummy'
-  });
-
-  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
-  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
-
-  for (const turn of memorySlice) {
-    if (!turn || !turn.text) continue;
-    messages.push({
-      role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
-      content: turn.text
-    });
-  }
-
-  messages.push({ role: 'user', content: userPrompt || 'Respond directly.' });
-
-  const stream = await client.chat.completions.create({
-    model: config.customModel || 'llama-3.3-70b-versatile',
     messages,
     response_format: { type: 'json_object' },
     stream: true
