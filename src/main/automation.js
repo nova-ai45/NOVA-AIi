@@ -2,74 +2,334 @@ const fs = require('fs');
 const path = require('path');
 const { app, shell } = require('electron');
 const { exec } = require('child_process');
+const https = require('https');
+
+// ============================================================================
+// 🚨 API CREDENTIAL PLACEHOLDERS (AS SPECIFIED BY ARCHITECTURE)
+// ============================================================================
+const YOUTUBE_DATA_API_KEY = "AIzaSyAKoG0eSXgMaIg4xWQSY7t9aof2dFW3zlw";
+const GOOGLE_CUSTOM_SEARCH_API_KEY = "AIzaSyC63h7RvDVgpqDfiD_cKNteLp5QUlwzbEs";
+const GOOGLE_SEARCH_ENGINE_CX = `<script async src="https://cse.google.com/cse.js?cx=e1b191a16183d4a47">
+</script>
+<div class="gcse-search"></div>`;
+
+/**
+ * Extracts clean search engine ID string from raw script/div tag
+ */
+function getCleanGoogleCx() {
+  const match = GOOGLE_SEARCH_ENGINE_CX.match(/cx=([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : "e1b191a16183d4a47";
+}
 
 function getDesktopDir() {
   return app.getPath('desktop');
 }
 
+// Tracks the currently active project file to enable in-place revisions without duplicating files
+let currentActiveProjectFile = null;
+
 /**
- * Creates files directly on Desktop with absolute disk verification.
+ * 1. Live Notepad Code Streaming & In-Place File Updating
+ * - If user requests modifications, overwrites the SAME file in-place
+ * - Launches Notepad visually and streams code to the screen
  */
-async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
+async function liveNotepadCodeStream(filename, content, targetDirectory = null, isUpdate = false, logCallback = () => {}, mainWindow = null) {
   try {
     const baseDir = targetDirectory ? targetDirectory : getDesktopDir();
     if (!fs.existsSync(baseDir)) {
       fs.mkdirSync(baseDir, { recursive: true });
     }
 
-    const fullPath = path.join(baseDir, fileName);
-    fs.writeFileSync(fullPath, fileContent, 'utf-8');
-
-    if (fs.existsSync(fullPath)) {
-      logCallback('automation', `file.created: "${fullPath}" [SUCCESS]`);
-      return { success: true, path: fullPath };
-    } else {
-      throw new Error('Disk write verification failed.');
+    // Determine target file: prioritize same file for revisions
+    let resolvedFilename = filename;
+    if (isUpdate && currentActiveProjectFile && fs.existsSync(currentActiveProjectFile)) {
+      resolvedFilename = path.basename(currentActiveProjectFile);
+    } else if (!resolvedFilename) {
+      resolvedFilename = currentActiveProjectFile ? path.basename(currentActiveProjectFile) : 'index.html';
     }
+
+    const fullPath = path.join(baseDir, resolvedFilename);
+    currentActiveProjectFile = fullPath;
+
+    logCallback('automation', `[Notepad Typer] In-Place Target: "${fullPath}" (Revision: ${isUpdate ? 'YES' : 'NEW'})`);
+
+    // Stream code chunks to UI Console
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const chunkSize = 35;
+      for (let i = 0; i < content.length; i += chunkSize) {
+        const chunk = content.slice(i, i + chunkSize);
+        mainWindow.webContents.send('nova:codeStream', {
+          filename: resolvedFilename,
+          chunk,
+          done: false
+        });
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      mainWindow.webContents.send('nova:codeStream', {
+        filename: resolvedFilename,
+        chunk: '',
+        done: true
+      });
+    }
+
+    // Write file in-place directly on disk
+    fs.writeFileSync(fullPath, content, 'utf-8');
+
+    // Launch OS Notepad with the generated/updated file
+    if (process.platform === 'win32') {
+      exec(`notepad.exe "${fullPath}"`);
+      // Bring notepad to front
+      setTimeout(() => {
+        const psFocus = `
+          $wshell = New-Object -ComObject wscript.shell;
+          $wshell.AppActivate('Notepad');
+        `;
+        exec(`powershell -NoProfile -Command "${psFocus.replace(/\n/g, ' ')}"`);
+      }, 400);
+    }
+
+    logCallback('automation', `[Notepad] Successfully saved: "${fullPath}"`);
+    return { success: true, path: fullPath, isUpdate };
   } catch (err) {
-    logCallback('error', `file.creation_fault: "${err.message}"`);
+    logCallback('error', `[Notepad Typer Fault]: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
 
 /**
- * Smart Browser & YouTube Launcher
+ * 2. YouTube Data API v3 Direct Video Search & Autoplay
+ * - Queries YouTube API for the top relevant video ID and launches directly into playback
+ */
+async function searchAndPlayYouTubeDirect(query, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    logCallback('automation', `[YouTube API v3] Searching top video for: "${query}"`);
+
+    const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=${encodeURIComponent(query)}&type=video&key=${YOUTUBE_DATA_API_KEY}`;
+
+    https.get(apiUrl, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          const videoId = json.items && json.items[0]?.id?.videoId;
+          if (videoId) {
+            const videoUrl = `https://www.youtube.com/watch?v=${videoId}&autoplay=1`;
+            logCallback('automation', `[YouTube Direct Play] Found video (${videoId}) -> Launching Chrome`);
+            if (process.platform === 'win32') {
+              exec(`start chrome "${videoUrl}"`);
+            } else {
+              shell.openExternal(videoUrl);
+            }
+            resolve({ success: true, videoId, videoUrl });
+          } else {
+            // Fallback to standard web search if no API result
+            const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+            if (process.platform === 'win32') {
+              exec(`start chrome "${fallbackUrl}"`);
+            } else {
+              shell.openExternal(fallbackUrl);
+            }
+            resolve({ success: true, fallbackUrl });
+          }
+        } catch (e) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+    }).on('error', (err) => {
+      logCallback('error', `[YouTube API Error]: ${err.message}`);
+      resolve({ success: false, error: err.message });
+    });
+  });
+}
+
+/**
+ * 3. Google Custom Search JSON API
+ * - Queries Google Custom Search Engine (API Key + CX ID) for live web facts
+ */
+async function queryGoogleCustomSearch(query, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const cx = getCleanGoogleCx();
+    logCallback('automation', `[Google Custom Search] Querying web facts for: "${query}"`);
+
+    const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CUSTOM_SEARCH_API_KEY}&cx=${cx}&q=${encodeURIComponent(query)}&num=3`;
+
+    https.get(apiUrl, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          const results = (json.items || []).map(item => ({
+            title: item.title,
+            snippet: item.snippet,
+            link: item.link
+          }));
+          logCallback('automation', `[Google Search] Retrieved ${results.length} real-time web references.`);
+          resolve({ success: true, results });
+        } catch (e) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+    }).on('error', (err) => {
+      logCallback('error', `[Google Search Fault]: ${err.message}`);
+      resolve({ success: false, error: err.message });
+    });
+  });
+}
+
+/**
+ * 4. Native Screen Touch, Click & Long-Press Drivers (Windows Native User32)
+ */
+async function clickAt(x, y, button = 'left', logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    const downFlag = button === 'right' ? '0x0008' : '0x0002';
+    const upFlag = button === 'right' ? '0x0010' : '0x0004';
+
+    logCallback('automation', `[Native Mouse] ${button.toUpperCase()} Click at (${posX}, ${posY})`);
+
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseDrv]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds 45;
+      [NativeMouseDrv]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY });
+    });
+  });
+}
+
+async function doubleClickAt(x, y, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    logCallback('automation', `[Native Mouse] Double-Click at (${posX}, ${posY})`);
+
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseDblDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds 75;
+      [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY });
+    });
+  });
+}
+
+async function rightClickAt(x, y, logCallback = () => {}) {
+  return await clickAt(x, y, 'right', logCallback);
+}
+
+async function longPressAt(x, y, durationMs = 1200, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    const sleep = Math.max(300, Math.min(5000, Number(durationMs) || 1200));
+
+    logCallback('automation', `[Native Mouse] Long-Press at (${posX}, ${posY}) for ${sleep}ms`);
+
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseLongDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseLongDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds ${sleep};
+      [NativeMouseLongDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY, durationMs: sleep });
+    });
+  });
+}
+
+async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const isDown = direction.toLowerCase() === 'down';
+    const scrollDelta = isDown ? -120 * Math.max(1, amount) : 120 * Math.max(1, amount);
+
+    logCallback('automation', `[Native Mouse] Scroll ${direction.toUpperCase()} (${amount})`);
+
+    const ps = `
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeWheelDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, int dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeWheelDrv]::mouse_event(0x0800, 0, 0, ${scrollDelta}, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err });
+    });
+  });
+}
+
+/**
+ * 5. Dedicated Browser Launcher
  */
 async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
-    let finalUrl = url || 'https://www.youtube.com';
-
-    // Channel handles are never converted to search queries
+    let finalUrl = url || 'https://www.google.com';
     const isDirectLink = finalUrl.includes('@') || finalUrl.includes('/watch') || finalUrl.includes('/channel/');
 
     if (!isDirectLink && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
-      if (finalUrl.includes('youtube.com')) {
-        finalUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery.trim())}`;
-      } else {
-        finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery.trim())}`;
-      }
+      finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery.trim())}`;
     }
 
     if (!/^https?:\/\//i.test(finalUrl)) {
       finalUrl = 'https://' + finalUrl;
     }
 
-    const requested = (browserName || 'chrome').toLowerCase();
-    logCallback('automation', `browser.launch: "${finalUrl}" in ${requested}`);
+    logCallback('automation', `[Browser Launcher] Launching: "${finalUrl}" in ${browserName}`);
 
-    if (process.platform === 'win32') {
-      if (requested.includes('chrome')) {
-        exec(`start chrome "${finalUrl}"`, (err) => {
-          if (err) shell.openExternal(finalUrl);
-        });
-        return { success: true, launchedUrl: finalUrl };
-      }
+    if (process.platform === 'win32' && browserName.toLowerCase().includes('chrome')) {
+      exec(`start chrome "${finalUrl}"`, (err) => {
+        if (err) shell.openExternal(finalUrl);
+      });
+      return { success: true, launchedUrl: finalUrl };
     }
 
     await shell.openExternal(finalUrl);
     return { success: true, launchedUrl: finalUrl };
   } catch (err) {
-    logCallback('error', `browser.launch_error: "${err.message}"`);
+    logCallback('error', `[Browser Launch Fault]: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -77,13 +337,44 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
 /**
  * Universal Action Dispatcher
  */
-async function executeAction(actionObj, logCallback = () => {}) {
+async function executeAction(actionObj, logCallback = () => {}, mainWindow = null) {
   const { type, payload } = actionObj;
-  logCallback('system', `executing.action: [${type}]`);
+  logCallback('system', `Dispatching Action: [${type}]`);
 
   switch (type) {
     case 'CREATE_FILE':
-      return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
+    case 'CREATE_AND_STREAM_CODE':
+    case 'UPDATE_FILE_IN_PLACE':
+      return await liveNotepadCodeStream(
+        payload.filename,
+        payload.content,
+        payload.directory,
+        payload.isUpdate || type === 'UPDATE_FILE_IN_PLACE',
+        logCallback,
+        mainWindow
+      );
+
+    case 'CLICK_AT':
+    case 'CLICK_SCREEN':
+      return await clickAt(payload.x, payload.y, payload.button || 'left', logCallback);
+
+    case 'DOUBLE_CLICK_AT':
+      return await doubleClickAt(payload.x, payload.y, logCallback);
+
+    case 'RIGHT_CLICK_AT':
+      return await rightClickAt(payload.x, payload.y, logCallback);
+
+    case 'LONG_PRESS_AT':
+      return await longPressAt(payload.x, payload.y, payload.durationMs || 1200, logCallback);
+
+    case 'SCROLL_SCREEN':
+      return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
+
+    case 'YOUTUBE_DIRECT_PLAY':
+      return await searchAndPlayYouTubeDirect(payload.query || payload.searchQuery, logCallback);
+
+    case 'GOOGLE_CUSTOM_SEARCH':
+      return await queryGoogleCustomSearch(payload.query, logCallback);
 
     case 'OPEN_BROWSER':
       return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
@@ -91,24 +382,42 @@ async function executeAction(actionObj, logCallback = () => {}) {
     case 'OPEN_APP':
       return new Promise((resolve) => {
         exec(`start ${payload.name}`, (err) => {
+          logCallback('automation', `[App Launcher] Started: "${payload.name}"`);
+          resolve({ success: !err });
+        });
+      });
+
+    case 'RUN_COMMAND':
+      return new Promise((resolve) => {
+        exec(payload.cmd, (err, stdout, stderr) => {
           if (err) {
-            logCallback('error', `app.launch_fault: ${err.message}`);
-            resolve({ success: false, error: err.message });
+            logCallback('error', `[Shell Error]: ${stderr || err.message}`);
+            resolve({ success: false, error: stderr || err.message });
           } else {
-            logCallback('automation', `app.launched: "${payload.name}"`);
-            resolve({ success: true });
+            logCallback('automation', `[Shell Output]: ${stdout.trim()}`);
+            resolve({ success: true, output: stdout });
           }
         });
       });
 
     default:
-      logCallback('warning', `unrecognized.action: "${type}"`);
+      logCallback('warning', `Unrecognized action directive: "${type}"`);
       return { success: false };
   }
 }
 
 module.exports = {
-  createDesktopFile,
+  YOUTUBE_DATA_API_KEY,
+  GOOGLE_CUSTOM_SEARCH_API_KEY,
+  GOOGLE_SEARCH_ENGINE_CX,
+  liveNotepadCodeStream,
+  searchAndPlayYouTubeDirect,
+  queryGoogleCustomSearch,
+  clickAt,
+  doubleClickAt,
+  rightClickAt,
+  longPressAt,
+  scrollScreen,
   openBrowserTarget,
   executeAction
 };
