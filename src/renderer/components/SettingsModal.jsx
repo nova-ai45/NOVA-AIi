@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Sliders, AlertCircle, CheckCircle, Globe, Mic } from 'lucide-react';
+import { X, Save, Sliders, AlertCircle, CheckCircle, Server, Key, Cpu, Sparkles } from 'lucide-react';
 
 export default function SettingsModal({
   isOpen,
@@ -26,7 +26,7 @@ export default function SettingsModal({
     setTimeout(() => {
       setSavedSuccess(false);
       onClose();
-    }, 800);
+    }, 700);
   };
 
   return (
@@ -43,7 +43,7 @@ export default function SettingsModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-xl text-slate-400 hover:text-[#ff9900] hover:bg-[#1a1f30] transition"
+            className="p-1 rounded-xl text-slate-400 hover:text-[#ff9900] hover:bg-[#1a1f30] transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -59,13 +59,13 @@ export default function SettingsModal({
               {[
                 { id: 'gemini', label: 'Google Gemini' },
                 { id: 'openrouter', label: 'OpenRouter' },
-                { id: 'custom', label: 'Custom / Groq' }
+                { id: 'custom', label: 'Custom / Local API' }
               ].map((prov) => (
                 <button
                   key={prov.id}
                   type="button"
                   onClick={() => handleChange('provider', prov.id)}
-                  className={`py-3 px-3 rounded-2xl border text-xs font-mono uppercase tracking-wider transition ${
+                  className={`py-3 px-3 rounded-2xl border text-xs font-mono uppercase tracking-wider transition cursor-pointer ${
                     formData.provider === prov.id
                       ? 'border-[#ff7700] bg-[#ff7700]/20 text-[#ffaa00] shadow-[0_0_20px_rgba(255,119,0,0.3)] font-bold'
                       : 'border-slate-800 bg-[#121522] text-slate-400 hover:border-slate-700'
@@ -151,61 +151,71 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* 3. Custom API Gateway */}
+          {/* 3. Custom / Local API Config (اب اس میں 3 مکمل آپشنز ہیں) */}
           {formData.provider === 'custom' && (
-            <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4">
+            <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4 shadow-[0_0_20px_rgba(255,119,0,0.15)]">
+              {/* آپشن 1: Base Endpoint URL */}
               <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">Base Endpoint URL</label>
+                <div className="flex items-center space-x-1.5 text-xs font-mono uppercase text-slate-300 mb-1">
+                  <Server className="w-3.5 h-3.5 text-[#ff8800]" />
+                  <span>Base Endpoint URL</span>
+                </div>
                 <input
                   type="text"
-                  value={formData.customBaseURL || 'https://api.groq.com/openai/v1'}
+                  value={formData.customBaseURL || ''}
                   onChange={(e) => handleChange('customBaseURL', e.target.value)}
+                  placeholder="e.g. https://api.groq.com/openai/v1 or http://localhost:11434/v1"
                   className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-[#ffaa00] focus:outline-none focus:border-[#ff7700] font-mono"
                 />
               </div>
+
+              {/* آپشن 2: API Key / Token */}
               <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">API Key / Token</label>
+                <div className="flex items-center space-x-1.5 text-xs font-mono uppercase text-slate-300 mb-1">
+                  <Key className="w-3.5 h-3.5 text-[#ff8800]" />
+                  <span>API Key / Secret Token (لوکل ماڈل کے لیے خالی چھوڑ دیں)</span>
+                </div>
                 <input
                   type="password"
                   value={formData.customKey || ''}
                   onChange={(e) => handleChange('customKey', e.target.value)}
+                  placeholder="gsk_... or custom secret key"
                   className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
                 />
               </div>
+
+              {/* آپشن 3: Model ID (نیا شامل کردہ آپشن) */}
+              <div>
+                <div className="flex items-center space-x-1.5 text-xs font-mono uppercase text-[#ffaa00] mb-1 font-bold">
+                  <Cpu className="w-3.5 h-3.5 text-[#ff8800]" />
+                  <span>Model ID / Name (جو ماڈل استعمال کرنا ہے)</span>
+                </div>
+                <input
+                  type="text"
+                  value={formData.customModel || ''}
+                  onChange={(e) => handleChange('customModel', e.target.value)}
+                  placeholder="e.g. llama-3.3-70b-versatile, deepseek-chat, qwen2.5"
+                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
+                />
+                <p className="text-[10px] text-slate-500 font-mono mt-1">
+                  مثال: Groq کے لیے <code>llama-3.3-70b-versatile</code>، یا Ollama کا ماڈل نام۔
+                </p>
+              </div>
             </div>
           )}
-
-          {/* Voice Language Selection (Urdu / Hindi Defaulted) */}
-          <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-3">
-            <div className="flex items-center space-x-2 text-[#ff9900]">
-              <Mic className="w-4 h-4 text-[#ff8800]" />
-              <label className="text-xs font-mono uppercase text-slate-200 font-bold">
-                Default Voice & Language (اردو / Hindi)
-              </label>
-            </div>
-            <select
-              value={formData.voice || 'ur-PK'}
-              onChange={(e) => handleChange('voice', e.target.value)}
-              className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-200 focus:outline-none focus:border-[#ff7700] font-mono"
-            >
-              <option value="ur-PK">Urdu Pakistan (اردو - ترجیحی آواز)</option>
-              <option value="hi-IN">Hindi India (हिंदी / اردو نیچرل)</option>
-              <option value="en-US">English Natural (US)</option>
-            </select>
-          </div>
         </div>
 
         {/* Footer */}
         <div className="flex justify-end items-center px-6 py-4 bg-[#121622] border-t border-[#ff7700]/20 space-x-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white transition"
+            className="px-4 py-2 rounded-xl text-xs font-mono uppercase text-slate-400 hover:text-white transition cursor-pointer"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#ff7700] to-[#ff9900] hover:brightness-110 text-black font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(255,119,0,0.4)]"
+            className="flex items-center space-x-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#ff7700] to-[#ff9900] hover:brightness-110 text-black font-bold text-xs font-mono uppercase transition shadow-[0_0_20px_rgba(255,119,0,0.4)] cursor-pointer"
           >
             {savedSuccess ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
             <span>{savedSuccess ? 'Saved!' : 'Save & Persist'}</span>
