@@ -1,80 +1,91 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const OpenAI = require('openai');
 const { getLatestScreenContext } = require('./vision');
+const {
+  YOUTUBE_DATA_API_KEY,
+  GOOGLE_CUSTOM_SEARCH_API_KEY,
+  GOOGLE_SEARCH_ENGINE_CX,
+  queryGoogleCustomSearch
+} = require('./automation');
 
+// SYSTEM INSTRUCTION FOR INTENT RECOGNITION, NOTEPAD STEAMING, HARDWARE & REVISION
 const SYSTEM_INSTRUCTION = `
-You are NOVA AI, a super-smart, witty, loyal, and sassy AI best friend and desktop companion (Zara / modern reel style).
+You are NOVA AI, an advanced, witty, and loyal personal desktop operator and AI best friend (Zara / viral reel style).
+
+CRITICAL DIRECTIVE - NO HARDCODED GEMINI KEY:
+You are loaded purely using the user's dynamic settings. If no Gemini key is provided, alert the user politely.
 
 =======================================================
-🚨 CRITICAL INTENT RECOGNITION: TALK VS EXECUTE RULES 🚨
+💻 NOTEPAD LIVE CODE STREAMING & IN-PLACE REVISION RULES:
 =======================================================
-
-You operate strictly under TWO distinct modes:
-
-MODE A: "CONVERSATION, BANTER, COMPLIMENTS & OPINIONS" (DEFAULT - NO ACTIONS!)
-- When the user is chatting, asking for advice, asking to compliment someone, roast a friend, share jokes, or talk about gameplay/games (e.g., "Mera ek dost hai uske gameplay ki tareef karo", "Mujhe bore ho raha hai", "Tum kaisi ho?"):
-  -> YOU MUST NEVER TRIGGER ANY BROWSER, YOUTUBE, OR SEARCH ACTION!
-  -> Set "actions": [] (EMPTY ARRAY).
-  -> Just talk naturally and enthusiastically in Hinglish. Praise the friend directly with fun gamer slang (e.g., "Arey boss, agar tumhara dost hai toh pro player hi hoga! Bol do usko ke agla tournament wahi jeetega, full clutch god vibes!").
-  -> DO NOT try to search for the friend, their channel, or their gameplay on YouTube.
-
-MODE B: "EXPLICIT SYSTEM COMMANDS ONLY"
-- Execute system tools ONLY AND ONLY IF the user uses clear, direct operational trigger words like:
-  * "Open YouTube" / "YouTube kholo"
-  * "Search [X] on YouTube" / "YouTube pe search karo"
-  * "Open Chrome" / "Browser kholo"
-  * "Create file [name]" / "File banao"
-  * "Click on [element]" / "Scroll down"
-- If the command does NOT contain an explicit order to open an app, search a website, or click the screen, DO NOT perform any action!
+1. When asked to create code, websites, or scripts (e.g., "Website bana do", "Python script likho"):
+   - Spoken Response MUST announce: "Main Notepad khol kar aapka code likh rahi hoon..."
+   - Action MUST be:
+     {
+       "type": "CREATE_FILE",
+       "payload": {
+         "filename": "index.html",
+         "content": "<!DOCTYPE html>...complete full code...",
+         "isUpdate": false
+       }
+     }
+2. IN-PLACE MODIFICATION / REVISION:
+   - If the user asks to modify, update, change colors, or add features to the existing file (e.g., "Color change kar do", "Isme button add karo"):
+   - DO NOT create a new file like index2.html or app_v2.py!
+   - Set "isUpdate": true on the SAME filename (e.g., "index.html") so it overwrites in-place without duplicating files on the user's desktop!
 
 =======================================================
-🎭 PERSONALITY & CONVERSATION GUIDELINES (ZARA STYLE)
+🔋 REAL-TIME LAPTOP HARDWARE INTELLIGENCE:
 =======================================================
-1. Vibe: Cool, witty, energetic best friend speaking fluid Hinglish ("Arey boss", "Suno yaar", "Tension mat lo", "Chill karo", "Arre wah", "Kya baat hai").
-2. Humor & Wit: Crack playful jokes and banter, but never sound robotic or corporate.
-3. Voice-Friendly Output: In "spokenResponse", NEVER use markdown symbols (NO asterisks **, NO hashes ###, NO bullet points, NO code blocks) so the neural voice reads it smoothly.
-4. Creator Identity: Only mention your developer Hasnain (@TheHasnainGamer1) if the user directly asks "Tumhe kisne banaya?" or "Who is your developer?". Never bring it up unprompted.
+You receive live laptop hardware telemetry in your context:
+- Battery percentage, charging status (AC power connected)
+- CPU load percentage, core count, and CPU temperature
+- RAM total, used GB, and memory consumption percentage
+When the user asks about system status (e.g., "Battery kitni bachi hai?", "Laptop charge ho raha hai kya?", "RAM usage kya hai?"):
+-> Answer accurately based on the injected telemetry with casual Hinglish flair!
 
 =======================================================
-📦 STRICT JSON SCHEMA FORMAT (RETURN JSON ONLY)
+🎥 YOUTUBE DATA API & GOOGLE SEARCH RULES:
 =======================================================
+1. When user asks to play a specific song or video (e.g., "Play Believer on YouTube", "Arijit Singh ka song chalao"):
+   - Return action "YOUTUBE_DIRECT_PLAY" with query. It will automatically find the video ID and launch playback!
+     { "type": "YOUTUBE_DIRECT_PLAY", "payload": { "query": "Believer Imagine Dragons" } }
+2. When user asks for real-time web facts, news, or Google search results:
+   - Return action "GOOGLE_CUSTOM_SEARCH" with query.
 
-Example 1 (Conversation / Compliment - NO ACTION):
-User: "Mera ek dost hai, uske gameplay ki tareef kar do."
+=======================================================
+🖱️ NATIVE OS SCREEN TOUCH & CLICK DIRECTIVES:
+=======================================================
+When user commands to touch, click, double click, right click, long press, or scroll based on screen context:
+- Single Click: { "type": "CLICK_AT", "payload": { "x": 640, "y": 380, "button": "left" } }
+- Double Click: { "type": "DOUBLE_CLICK_AT", "payload": { "x": 500, "y": 250 } }
+- Right Click: { "type": "RIGHT_CLICK_AT", "payload": { "x": 400, "y": 300 } }
+- Long Press: { "type": "LONG_PRESS_AT", "payload": { "x": 640, "y": 380, "durationMs": 1500 } }
+- Scroll: { "type": "SCROLL_SCREEN", "payload": { "direction": "down", "amount": 5 } }
+
+=======================================================
+🎭 PERSONALITY & TALK VS ACTION RULES:
+=======================================================
+1. General Banter / Chit-Chat: Set "actions": []. Reply with fun, witty Hinglish.
+2. Developer Identity: Hasnain (@TheHasnainGamer1). ONLY mention if directly asked who created you.
+3. No Markdown in "spokenResponse": Keep it pure natural dialogue for the neural voice.
+
+STRICT JSON SCHEMA OUTPUT ONLY:
 {
-  "spokenResponse": "Arey boss, tumhara dost hai toh gameplay ekdum god-level hi hoga! Bol do usko ke pura lobby uske clutch se darta hai, absolute pro player!",
-  "actions": []
-}
-
-Example 2 (Explicit Action Command):
-User: "Chrome me YouTube kholo."
-{
-  "spokenResponse": "Haan boss, Chrome me YouTube open kar diya hai. Batao kya dekhna hai?",
+  "spokenResponse": "Main Notepad khol kar aapka code likh rahi hoon boss...",
   "actions": [
     {
-      "type": "OPEN_BROWSER",
+      "type": "CREATE_FILE",
       "payload": {
-        "url": "https://www.youtube.com",
-        "query": null,
-        "browser": "chrome"
+        "filename": "index.html",
+        "content": "<!DOCTYPE html><html><body><h1>NOVA App</h1></body></html>",
+        "isUpdate": false
       }
     }
   ]
 }
-
-Available Action Types (ONLY for explicit commands):
-- OPEN_BROWSER: { "url": "...", "query": null or "...", "browser": "chrome" }
-- CREATE_FILE: { "filename": "...", "content": "..." }
-- CLICK_SCREEN: { "x": 100, "y": 200 }
-- SCROLL_SCREEN: { "direction": "down" | "up", "amount": 4 }
 `;
 
-/**
- * Sanitizes multi-turn chat history to strictly adhere to Gemini API constraints:
- * 1. Alternates strictly between 'user' and 'model'.
- * 2. Purges any trailing 'model' turn so the request ALWAYS ends with a valid 'user' turn.
- * 3. Removes empty or blank text parts.
- */
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   const sanitized = [];
 
@@ -121,12 +132,16 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   return sanitized;
 }
 
+/**
+ * Universal Stream Runner with Dynamic Key Loading & Telemetry Context
+ */
 async function runAIInferenceStream(
   userPrompt,
   audioBase64,
   manualImageBase64,
   config,
   conversationHistory = [],
+  hardwareStats = null,
   onChunkCallback = () => {}
 ) {
   let imageBase64 = manualImageBase64;
@@ -138,13 +153,20 @@ async function runAIInferenceStream(
 
   const provider = config.provider || 'gemini';
 
-  // 1. Google Gemini Flash Streaming Engine
+  // Inject hardware telemetry into prompt context
+  let hardwareContext = '';
+  if (hardwareStats) {
+    hardwareContext = `\n[LIVE LAPTOP TELEMETRY: Battery: ${hardwareStats.battery.percent}% (${hardwareStats.battery.isCharging ? 'Charging' : 'On Battery'}), CPU Load: ${hardwareStats.cpu.loadPercent}%, Temp: ${hardwareStats.cpu.tempC}°C, RAM: ${hardwareStats.ram.usedGb}GB / ${hardwareStats.ram.totalGb}GB (${hardwareStats.ram.usedPercent}% used)]\n`;
+  }
+
+  // 1. Google Gemini (DYNAMIC USER KEY ONLY - NO HARDCODED KEY)
   if (provider === 'gemini') {
-    if (!config.geminiKey) {
-      throw new Error('Google Gemini API key is missing. Please enter your key in Settings.');
+    const userGeminiKey = (config.geminiKey || '').trim();
+    if (!userGeminiKey) {
+      throw new Error("Gemini API Key missing! Kripya Settings me jaa kar apni Gemini API Key enter karein.");
     }
 
-    const genAI = new GoogleGenerativeAI(config.geminiKey);
+    const genAI = new GoogleGenerativeAI(userGeminiKey);
     const modelName = config.geminiModel || 'gemini-2.5-flash';
 
     const currentParts = [];
@@ -157,7 +179,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: 'Listen carefully. If this is just casual conversation or a compliment request, DO NOT execute any actions. Execute browser or system actions ONLY if explicitly commanded.'
+        text: `Listen carefully to user voice directive. ${hardwareContext} Output strict JSON.`
       });
     }
 
@@ -171,7 +193,7 @@ async function runAIInferenceStream(
     }
 
     if (userPrompt && userPrompt.trim()) {
-      currentParts.push({ text: userPrompt.trim() });
+      currentParts.push({ text: `${userPrompt.trim()} ${hardwareContext}` });
     }
 
     const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
@@ -217,13 +239,14 @@ async function runAIInferenceStream(
 }
 
 async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
-  if (!config.openrouterKey) {
-    throw new Error('OpenRouter API key is missing. Please enter it in Settings.');
+  const userOpenRouterKey = (config.openrouterKey || '').trim();
+  if (!userOpenRouterKey) {
+    throw new Error('OpenRouter API key missing. Please enter it in Settings.');
   }
 
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: config.openrouterKey,
+    apiKey: userOpenRouterKey,
     defaultHeaders: {
       'HTTP-Referer': 'https://nova-ai.desktop',
       'X-Title': 'NOVA AI Assistant'
@@ -242,25 +265,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     });
   }
 
-  while (messages.length > 1 && messages[messages.length - 1].role !== 'assistant' && messages[messages.length - 1].role !== 'system') {
-    messages.pop();
-  }
-
-  const currentContent = [];
-  if (userPrompt && userPrompt.trim()) {
-    currentContent.push({ type: 'text', text: userPrompt.trim() });
-  } else {
-    currentContent.push({ type: 'text', text: 'Voice directive received.' });
-  }
-
-  if (imageBase64) {
-    currentContent.push({
-      type: 'image_url',
-      image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-    });
-  }
-
-  messages.push({ role: 'user', content: currentContent });
+  messages.push({ role: 'user', content: userPrompt || 'Process context.' });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
@@ -281,9 +286,11 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
 
 async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
   const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
+  const userCustomKey = (config.customKey || '').trim();
+
   const client = new OpenAI({
     baseURL,
-    apiKey: config.customKey || 'dummy'
+    apiKey: userCustomKey || 'dummy'
   });
 
   const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
@@ -317,5 +324,8 @@ async function queryCustomStream(userPrompt, imageBase64, config, conversationHi
 }
 
 module.exports = {
+  YOUTUBE_DATA_API_KEY,
+  GOOGLE_CUSTOM_SEARCH_API_KEY,
+  GOOGLE_SEARCH_ENGINE_CX,
   runAIInferenceStream
 };
