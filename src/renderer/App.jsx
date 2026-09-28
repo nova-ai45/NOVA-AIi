@@ -17,7 +17,7 @@ import {
 export default function App() {
   const [logs, setLogs] = useState([
     { timestamp: 'SYSTEM', message: "nova.core(status=\"ready\", engine=\"speech_recognition\")" },
-    { timestamp: 'ACTIVE', message: "Speech Engine Initialized | Language: ur-PK / en-US" }
+    { timestamp: 'ACTIVE', message: "Speech Engine Active | Language: ur-PK" }
   ]);
   const [sphereState, setSphereState] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking' | 'executing'
   const [inputText, setInputText] = useState('');
@@ -27,7 +27,7 @@ export default function App() {
   const [liveMicPercent, setLiveMicPercent] = useState(0);
   const [isSpeakingNow, setIsSpeakingNow] = useState(false);
   const [micMuted, setMicMuted] = useState(false);
-  const [speechLang, setSpeechLang] = useState('ur-PK'); // 'ur-PK' or 'en-US'
+  const [speechLang, setSpeechLang] = useState('ur-PK'); // Single clean language string
   const [activeTab, setActiveTab] = useState('assistant');
 
   const [chatHistory, setChatHistory] = useState(() => {
@@ -48,12 +48,14 @@ export default function App() {
 
   const [cpuUsage, setCpuUsage] = useState(38);
 
-  // Speech Recognition & State Refs
+  // Recognition & Lifecycle Refs
   const recognitionRef = useRef(null);
   const silenceTimerRef = useRef(null);
+  const restartTimeoutRef = useRef(null);
   const accumulatedTranscriptRef = useRef('');
   const isRecognitionActiveRef = useRef(false);
   const isProcessingRef = useRef(false);
+  const isExplicitlyMutedRef = useRef(false);
   const terminalEndRef = useRef(null);
   const activeAudioElementRef = useRef(null);
 
@@ -72,7 +74,7 @@ export default function App() {
       const localCfg = localStorage.getItem('nova_persistent_config');
       const merged = { ...(localCfg ? JSON.parse(localCfg) : {}), ...cfg };
       setSettings(merged);
-      if (merged.recognitionLang) {
+      if (merged.recognitionLang === 'en-US' || merged.recognitionLang === 'ur-PK') {
         setSpeechLang(merged.recognitionLang);
       }
     });
@@ -86,82 +88,75 @@ export default function App() {
       setSphereState(st);
     });
 
-    startSpeechRecognition();
+    // Initialize stable speech recognition instance once
+    initStableSpeechEngine();
 
     return () => {
       clearInterval(cpuInterval);
       unsubLog();
       unsubState();
-      stopSpeechRecognition();
+      destroySpeechEngine();
       stopOngoingSpeechPlayback();
     };
+  }, []);
+
+  // Update recognition language dynamically without tearing down the instance
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = speechLang;
+    }
   }, [speechLang]);
 
-  // 1. Web Speech API Engine with Strict Accuracy and Language Tuning
-  const startSpeechRecognition = () => {
+  // 1. Stable Continuous Speech Recognition Architecture
+  const initStableSpeechEngine = () => {
     const SpeechConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechConstructor) {
-      console.error("[Voice Input]: Web Speech API is not supported in this environment.");
+      console.warn("[Voice Input]: Web Speech API is not supported in this runtime.");
       return;
     }
 
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (_) {}
-    }
+    if (recognitionRef.current) return;
 
     try {
       const recognition = new SpeechConstructor();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = speechLang; // Explicitly set to 'ur-PK' or 'en-US'
+      recognition.lang = speechLang;
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
         isRecognitionActiveRef.current = true;
-        if (!isProcessingRef.current && !micMuted) {
+        if (!isProcessingRef.current && !isExplicitlyMutedRef.current) {
           setSphereState('idle');
         }
       };
 
       recognition.onresult = (event) => {
-        if (isProcessingRef.current || micMuted) return;
+        if (isProcessingRef.current || isExplicitlyMutedRef.current) return;
 
-        let interimTranscript = '';
-        let finalTranscript = '';
-
+        let liveText = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const item = event.results[i][0];
           if (item && item.transcript) {
-            if (event.results[i].isFinal) {
-              finalTranscript += item.transcript + ' ';
-            } else {
-              interimTranscript += item.transcript;
-            }
+            liveText += item.transcript;
           }
         }
 
-        const rawTranscript = (finalTranscript || interimTranscript);
-        // Clean and trim string
-        const cleanTranscript = rawTranscript.trim().replace(/\s+/g, ' ');
+        const cleanTranscript = liveText.trim().replace(/\s+/g, ' ');
 
         if (cleanTranscript.length > 0) {
           accumulatedTranscriptRef.current = cleanTranscript;
           setIsSpeakingNow(true);
           setSphereState('listening');
-          setAudioLevel(0.5);
+          setAudioLevel(0.45);
           setLiveMicPercent(85);
 
-          // Log live recognized text
-          console.log("[Voice Input Transcript (Live)]:", cleanTranscript);
-
-          // Reset silence timer on every spoken syllable
+          // Reset silence timer on every chunk
           if (silenceTimerRef.current) {
             clearTimeout(silenceTimerRef.current);
           }
 
-          // 1.0 second silence debounce threshold
+          // 1.0 second silence debounce -> auto dispatch
           silenceTimerRef.current = setTimeout(() => {
             const finalPrompt = accumulatedTranscriptRef.current.trim();
             accumulatedTranscriptRef.current = '';
@@ -170,7 +165,7 @@ export default function App() {
             setAudioLevel(0);
 
             if (finalPrompt.length > 0 && !isProcessingRef.current) {
-              console.log("[Voice Input Transcript (Final Dispatched)]:", finalPrompt);
+              console.log("[Mic Captured]:", finalPrompt);
               try {
                 recognition.stop();
               } catch (_) {}
@@ -181,58 +176,81 @@ export default function App() {
       };
 
       recognition.onerror = (event) => {
-        if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          console.warn("[Voice Input Error]:", event.error);
+        // Silently tolerate standard non-fatal events without breaking loop
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          return;
         }
+        console.warn("[Voice Input Warning]:", event.error);
       };
 
       recognition.onend = () => {
         isRecognitionActiveRef.current = false;
-        // Auto-restart if not muted and not currently executing/speaking
-        if (!isProcessingRef.current && !micMuted) {
-          setTimeout(() => {
-            try {
-              recognition.start();
-            } catch (_) {}
-          }, 200);
+
+        if (restartTimeoutRef.current) {
+          clearTimeout(restartTimeoutRef.current);
+        }
+
+        // Debounce restart by 600ms to eliminate rapid Chrome audio IPC crashes
+        if (!isProcessingRef.current && !isExplicitlyMutedRef.current) {
+          restartTimeoutRef.current = setTimeout(() => {
+            safeStartRecognition();
+          }, 600);
         }
       };
 
       recognitionRef.current = recognition;
-      try {
-        recognition.start();
-      } catch (e) {
-        console.warn("[Voice Input]: Recognition start warning:", e.message);
-      }
+      safeStartRecognition();
     } catch (err) {
-      console.error("[Voice Input]: Setup failure:", err);
+      console.error("[Voice Input]: Initialization error:", err);
     }
   };
 
-  const stopSpeechRecognition = () => {
+  const safeStartRecognition = () => {
+    if (!recognitionRef.current) return;
+    if (isProcessingRef.current || isExplicitlyMutedRef.current || isRecognitionActiveRef.current) return;
+
+    try {
+      recognitionRef.current.start();
+    } catch (_) {
+      // Already transitioning or started
+    }
+  };
+
+  const destroySpeechEngine = () => {
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
+    }
+    if (restartTimeoutRef.current) {
+      clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
     }
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
       } catch (_) {}
       isRecognitionActiveRef.current = false;
+      recognitionRef.current = null;
     }
   };
 
   const toggleMicMute = () => {
     if (!micMuted) {
+      isExplicitlyMutedRef.current = true;
       setMicMuted(true);
-      stopSpeechRecognition();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (_) {}
+      }
       setSphereState('idle');
       setAudioLevel(0);
       setLiveMicPercent(0);
       setIsSpeakingNow(false);
     } else {
+      isExplicitlyMutedRef.current = false;
       setMicMuted(false);
-      startSpeechRecognition();
+      safeStartRecognition();
     }
   };
 
@@ -288,7 +306,7 @@ export default function App() {
         onAudioFinished();
       });
     } catch (e) {
-      console.error("[Voice Playback]: Error playing audio response:", e);
+      console.error("[Voice Playback]: Error playing audio:", e);
       finishExecutionTurn();
     }
   };
@@ -297,21 +315,20 @@ export default function App() {
     isProcessingRef.current = false;
     setSphereState('idle');
     setAudioLevel(0);
-    // Restart recognition safely
-    if (!micMuted && recognitionRef.current && !isRecognitionActiveRef.current) {
-      try {
-        recognitionRef.current.start();
-      } catch (_) {}
+
+    // Restart recognition with clean delay
+    if (!isExplicitlyMutedRef.current && recognitionRef.current && !isRecognitionActiveRef.current) {
+      setTimeout(() => {
+        safeStartRecognition();
+      }, 400);
     }
   };
 
-  // 3. User Query Pipeline (Text & Voice routing to AI)
+  // 3. User Query Pipeline (Direct routing to AI, zero metrics calls)
   const handleExecute = async (overridePrompt = null) => {
     const prompt = (overridePrompt || inputText || '').trim();
 
-    // If no speech or empty prompt, do NOT fallback to battery/CPU metrics!
     if (!prompt) {
-      setLogs((prev) => [...prev, { timestamp: 'WARN', message: "No speech recognized. Please speak your query." }]);
       finishExecutionTurn();
       return;
     }
@@ -321,7 +338,6 @@ export default function App() {
     setInputText('');
     setSphereState('thinking');
 
-    console.log("[Routing to AI Engine]:", prompt);
     setLogs((prev) => [...prev, { timestamp: 'USER', message: prompt }]);
 
     const cleanHistorySnapshot = chatHistory.filter((item) => item && item.text && item.text.trim() !== '');
@@ -384,17 +400,17 @@ export default function App() {
         </div>
 
         <div className="flex items-center space-x-4">
-          {/* Language Switcher Badge (ur-PK / en-US) */}
+          {/* Explicit Language Selector Toggle */}
           <button
             onClick={toggleLanguage}
-            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#141824] hover:bg-[#1c2234] border border-[#ff7700]/30 text-xs font-mono text-[#ffaa00] transition"
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-[#141824] hover:bg-[#1c2234] border border-[#ff7700]/30 text-xs font-mono text-[#ffaa00] transition cursor-pointer"
             title="Toggle Recognition Language"
           >
             <Languages className="w-3.5 h-3.5 text-[#ff8800]" />
             <span>{speechLang}</span>
           </button>
 
-          {/* YouTube Creator Channel Link */}
+          {/* YouTube Channel Button */}
           <button
             onClick={openHasnainYouTubeInChrome}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-[#ff7700] hover:from-red-500 hover:to-[#ff9900] text-white text-xs font-mono font-bold transition shadow-[0_0_15px_rgba(255,119,0,0.4)] cursor-pointer"
@@ -405,7 +421,7 @@ export default function App() {
             <ExternalLink className="w-3.5 h-3.5 opacity-80" />
           </button>
 
-          {/* Online Status */}
+          {/* Online Indicator */}
           <div className="flex items-center space-x-2 text-xs font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#10b981] animate-ping" />
             <span className="text-emerald-400 font-semibold tracking-wide">ONLINE</span>
@@ -552,7 +568,7 @@ export default function App() {
             <span className="text-emerald-400">ACTIVE</span>
           </div>
           <div className="text-[11px] font-mono text-slate-500">
-            v4.1.0 &bull; VOICE & INTENT ROUTER READY
+            v4.2.0 &bull; STABLE SPEECH ENGINE
           </div>
         </div>
 
