@@ -2,7 +2,6 @@ const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { exec } = require('child_process');
 
 let si = null;
 try {
@@ -11,12 +10,10 @@ try {
   console.warn('[Hardware] systeminformation module not found, using OS fallback.');
 }
 
-// 1. Prevent hardware acceleration GPU crashes
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
 
-// 2. Emergency Crash Logger
 function logEmergencyCrash(type, error) {
   const errString = error && error.stack ? error.stack : String(error);
   const logMessage = `[${new Date().toISOString()}] ${type}:\n${errString}\n\n`;
@@ -35,7 +32,6 @@ process.on('unhandledRejection', (reason) => {
   logEmergencyCrash('Unhandled Rejection', reason);
 });
 
-// 3. Single Instance Lock
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.exit(0);
@@ -53,7 +49,6 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 
 let mainWindow = null;
 
-// Persistent Settings (NO hardcoded Gemini key - user supplies their own in Settings)
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
   geminiKey: '',
@@ -64,6 +59,7 @@ const DEFAULT_SETTINGS = {
   customKey: '',
   customModel: 'llama-3.3-70b-versatile',
   voice: 'hi-IN-SwaraNeural',
+  recognitionLang: 'ur-PK',
   autoSpeak: true,
   autoVision: true,
   autoFailover: true
@@ -118,7 +114,6 @@ function broadcastState(state) {
   }
 }
 
-// 4. Laptop Real-Time Hardware Management (Battery, CPU, RAM, Temperature)
 async function fetchFullHardwareStats() {
   try {
     if (si) {
@@ -157,7 +152,6 @@ async function fetchFullHardwareStats() {
     console.warn('[Hardware] Error reading stats:', e.message);
   }
 
-  // Pure Node.js OS fallback
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
   const usedMem = totalMem - freeMem;
@@ -170,91 +164,6 @@ async function fetchFullHardwareStats() {
       usedPercent: Math.round((usedMem / totalMem) * 100)
     }
   };
-}
-
-// 5. Native Windows Touch, Click, Double-Click, Right-Click & Long-Press
-function nativeClickAt(x, y, button = 'left') {
-  return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
-    const downFlag = button === 'right' ? '0x0008' : '0x0002';
-    const upFlag = button === 'right' ? '0x0010' : '0x0004';
-
-    const ps = `
-      Add-Type -AssemblyName System.Windows.Forms;
-      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeMouse {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeMouse]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds 50;
-      [NativeMouse]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, x: posX, y: posY });
-    });
-  });
-}
-
-function nativeDoubleClickAt(x, y) {
-  return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
-    const ps = `
-      Add-Type -AssemblyName System.Windows.Forms;
-      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeMouseDbl {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeMouseDbl]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
-      [NativeMouseDbl]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds 80;
-      [NativeMouseDbl]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
-      [NativeMouseDbl]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, x: posX, y: posY });
-    });
-  });
-}
-
-function nativeLongPressAt(x, y, durationMs = 1200) {
-  return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
-    const sleep = Math.max(200, Math.min(5000, Number(durationMs) || 1200));
-    const ps = `
-      Add-Type -AssemblyName System.Windows.Forms;
-      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeMouseLong {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeMouseLong]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds ${sleep};
-      [NativeMouseLong]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, x: posX, y: posY, duration: sleep });
-    });
-  });
 }
 
 function resolvePreloadPath() {
@@ -355,26 +264,11 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // IPC Handlers
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
-  // Live Hardware Telemetry IPC
   ipcMain.handle('nova:getHardwareStats', async () => {
     return await fetchFullHardwareStats();
-  });
-
-  // Native Mouse Control IPCs
-  ipcMain.handle('nova:clickAt', async (_, { x, y, button }) => {
-    return await nativeClickAt(x, y, button || 'left');
-  });
-
-  ipcMain.handle('nova:doubleClickAt', async (_, { x, y }) => {
-    return await nativeDoubleClickAt(x, y);
-  });
-
-  ipcMain.handle('nova:longPressAt', async (_, { x, y, durationMs }) => {
-    return await nativeLongPressAt(x, y, durationMs || 1200);
   });
 
   ipcMain.handle('nova:stopSpeech', () => {
@@ -416,7 +310,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master AI Pipeline Dispatcher
+  // Dedicated AI Command Router
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
@@ -432,11 +326,11 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      // Fetch live hardware stats to give AI situational awareness
-      const hardwareStats = await fetchFullHardwareStats();
+      // Check if user explicitly asked for hardware statistics before fetching
+      const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(text || '');
+      const hardwareStats = isExplicitHardwareQuery ? await fetchFullHardwareStats() : null;
 
       if (text) broadcastLog('command', `User Directive: "${text}"`);
-      else if (audioBase64) broadcastLog('command', 'User: [Voice Signal Streamed]');
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem offline.');
@@ -448,7 +342,7 @@ app.whenReady().then(() => {
         visionData,
         settings,
         conversationHistory || [],
-        hardwareStats,
+        hardwareStats, // Passed ONLY if requested; otherwise null
         (streamChunk) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
@@ -456,7 +350,6 @@ app.whenReady().then(() => {
         }
       );
 
-      // Execute physical OS automations (files, Notepad typer, mouse clicks, scrolls, web search)
       if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
         for (const action of aiResponse.actions) {
           broadcastState('executing');
@@ -464,7 +357,6 @@ app.whenReady().then(() => {
         }
       }
 
-      // Speak back using Microsoft Edge Neural Voice
       let audioResult = null;
       const responseToSpeak = (aiResponse.spokenResponse || '').trim();
 
