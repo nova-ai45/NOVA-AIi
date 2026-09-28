@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Sliders, AlertCircle, CheckCircle, Server, Key, Cpu, Sparkles } from 'lucide-react';
+import { X, Save, Sliders, AlertCircle, CheckCircle, Server, Key, Cpu, BatteryCharging, ExternalLink } from 'lucide-react';
 
 export default function SettingsModal({
   isOpen,
@@ -9,10 +9,19 @@ export default function SettingsModal({
 }) {
   const [formData, setFormData] = useState(currentSettings);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [liveHardware, setLiveHardware] = useState(null);
 
   useEffect(() => {
     setFormData(currentSettings);
   }, [currentSettings]);
+
+  useEffect(() => {
+    if (isOpen && window.novaAPI && window.novaAPI.getHardwareStats) {
+      window.novaAPI.getHardwareStats().then((stats) => {
+        if (stats) setLiveHardware(stats);
+      });
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -31,14 +40,13 @@ export default function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4">
-      {/* Modal Container with Amber / Orange Cyberpunk Glow */}
       <div className="w-full max-w-2xl bg-[#0d0f17] border border-[#ff7700]/50 rounded-3xl shadow-[0_0_60px_rgba(255,119,0,0.25)] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#ff7700]/20 bg-[#121622]">
           <div className="flex items-center space-x-2.5 text-[#ff9900]">
             <Sliders className="w-5 h-5 text-[#ff8800]" />
             <h2 className="font-mono font-bold text-sm tracking-widest uppercase text-white">
-              NOVA AI // SYSTEM CONFIGURATION
+              NOVA AI // CORE CONFIGURATION
             </h2>
           </div>
           <button
@@ -59,7 +67,7 @@ export default function SettingsModal({
               {[
                 { id: 'gemini', label: 'Google Gemini' },
                 { id: 'openrouter', label: 'OpenRouter' },
-                { id: 'custom', label: 'Custom / Local API' }
+                { id: 'custom', label: 'Custom / Groq' }
               ].map((prov) => (
                 <button
                   key={prov.id}
@@ -77,25 +85,34 @@ export default function SettingsModal({
             </div>
           </div>
 
-          {/* 1. Google Gemini Config */}
+          {/* 1. Google Gemini Config (User supplies their own key) */}
           {formData.provider === 'gemini' && (
             <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4">
-              <div>
-                <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Google Gemini API Key
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-mono uppercase text-slate-300 block">
+                  Your Google Gemini API Key <span className="text-[#ff7700]">*Required</span>
                 </label>
-                <input
-                  type="password"
-                  value={formData.geminiKey || ''}
-                  onChange={(e) => handleChange('geminiKey', e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-[#ffaa00] focus:outline-none focus:border-[#ff7700] font-mono"
-                />
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-mono text-[#ffaa00] hover:underline flex items-center space-x-1"
+                >
+                  <span>Get Free Key</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
+              <input
+                type="password"
+                value={formData.geminiKey || ''}
+                onChange={(e) => handleChange('geminiKey', e.target.value)}
+                placeholder="AIzaSy... (Enter your personal Gemini API Key)"
+                className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-[#ffaa00] focus:outline-none focus:border-[#ff7700] font-mono"
+              />
 
               <div>
                 <label className="text-xs font-mono uppercase text-slate-300 block mb-1">
-                  Gemini Model (Default: gemini-2.5-flash)
+                  Gemini Model Variant
                 </label>
                 <input
                   list="gemini-models"
@@ -151,10 +168,9 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* 3. Custom / Local API Config (اب اس میں 3 مکمل آپشنز ہیں) */}
+          {/* 3. Custom / Local API Config */}
           {formData.provider === 'custom' && (
             <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4 shadow-[0_0_20px_rgba(255,119,0,0.15)]">
-              {/* آپشن 1: Base Endpoint URL */}
               <div>
                 <div className="flex items-center space-x-1.5 text-xs font-mono uppercase text-slate-300 mb-1">
                   <Server className="w-3.5 h-3.5 text-[#ff8800]" />
@@ -169,11 +185,10 @@ export default function SettingsModal({
                 />
               </div>
 
-              {/* آپشن 2: API Key / Token */}
               <div>
                 <div className="flex items-center space-x-1.5 text-xs font-mono uppercase text-slate-300 mb-1">
                   <Key className="w-3.5 h-3.5 text-[#ff8800]" />
-                  <span>API Key / Secret Token (لوکل ماڈل کے لیے خالی چھوڑ دیں)</span>
+                  <span>API Key / Secret Token</span>
                 </div>
                 <input
                   type="password"
@@ -184,22 +199,44 @@ export default function SettingsModal({
                 />
               </div>
 
-              {/* آپشن 3: Model ID (نیا شامل کردہ آپشن) */}
               <div>
                 <div className="flex items-center space-x-1.5 text-xs font-mono uppercase text-[#ffaa00] mb-1 font-bold">
                   <Cpu className="w-3.5 h-3.5 text-[#ff8800]" />
-                  <span>Model ID / Name (جو ماڈل استعمال کرنا ہے)</span>
+                  <span>Model ID / Name</span>
                 </div>
                 <input
                   type="text"
                   value={formData.customModel || ''}
                   onChange={(e) => handleChange('customModel', e.target.value)}
-                  placeholder="e.g. llama-3.3-70b-versatile, deepseek-chat, qwen2.5"
+                  placeholder="e.g. llama-3.3-70b-versatile, deepseek-chat"
                   className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
                 />
-                <p className="text-[10px] text-slate-500 font-mono mt-1">
-                  مثال: Groq کے لیے <code>llama-3.3-70b-versatile</code>، یا Ollama کا ماڈل نام۔
-                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Live Hardware Telemetry Panel */}
+          {liveHardware && (
+            <div className="p-4 rounded-2xl bg-[#090b10] border border-slate-800 space-y-2">
+              <div className="flex items-center space-x-2 text-xs font-mono text-[#ffaa00] font-bold">
+                <BatteryCharging className="w-4 h-4 text-[#ff8800]" />
+                <span>Laptop Hardware Status (Full OS Access Granted)</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-xs font-mono text-slate-300 pt-1">
+                <div>
+                  <span className="text-slate-500 block">Battery:</span>
+                  <span className="text-[#ffaa00] font-bold">
+                    {liveHardware.battery.percent}% {liveHardware.battery.isCharging ? '(Charging)' : '(On Battery)'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">CPU Load / Temp:</span>
+                  <span className="text-white font-bold">{liveHardware.cpu.loadPercent}% / {liveHardware.cpu.tempC}°C</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 block">Memory (RAM):</span>
+                  <span className="text-white font-bold">{liveHardware.ram.usedGb}GB / {liveHardware.ram.totalGb}GB</span>
+                </div>
               </div>
             </div>
           )}
