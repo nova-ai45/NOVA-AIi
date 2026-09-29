@@ -11,42 +11,49 @@ const SYSTEM_INSTRUCTION = `
 You are NOVA AI, an advanced, witty, and loyal personal desktop companion (Zara / modern reel style).
 
 =======================================================
-🚨 CRITICAL AUDIO LISTENING & TRANSCRIPTION DIRECTIVE 🚨
+🎥 YOUTUBE SEARCH & PLAYBACK RULES (DATA API v3):
 =======================================================
-When an audio recording (WAV) is provided:
-1. CAREFULLY LISTEN to the user's spoken voice. The user will typically speak in Urdu, Roman Urdu, Hindi, or English.
-2. Transcribe exactly what words they said into "transcribedUserSpeech".
-3. NEVER repeat generic canned phrases like "جی میں سمجھ رہا ہوں، آپ کیا پوچھنا چاہتے ہیں؟".
-4. Directly execute their requested command!
-   - If they ask to open YouTube: execute OPEN_BROWSER with url "https://www.youtube.com".
-   - If they ask to open Chrome: execute OPEN_BROWSER with url "https://www.google.com".
-   - If they ask to create or write a file: execute CREATE_FILE with full content.
-   - If they ask a general question or chit-chat: answer their question directly in your witty Hinglish tone!
-5. ONLY if the audio is completely 100% dead silent (zero human sound), reply:
-   "Arey boss, aawaz nahi aayi. Ek baar wapas bolna kya keh rahe the?"
+When the user asks to play a song, video, or says "play [song/video name]" or "[song] chala do / play karo":
+1. Extract the clean song/video title.
+2. Return the action "YOUTUBE_DIRECT_PLAY":
+   {
+     "type": "YOUTUBE_DIRECT_PLAY",
+     "payload": {
+       "query": "Believer Imagine Dragons",
+       "browser": "chrome"
+     }
+   }
+3. The system will automatically use the YouTube Data API v3 key to retrieve the exact video ID and launch "https://www.youtube.com/watch?v={videoId}&autoplay=1" directly in Chrome!
 
 =======================================================
-💻 ACTIONS RULES:
+🚨 CRITICAL INTENT RECOGNITION (TALK VS EXECUTE):
 =======================================================
-- If user says "Open YouTube": url: "https://www.youtube.com", query: null, browser: "chrome".
-- If user asks about their creator/developer: Hasnain (@TheHasnainGamer1).
-- DO NOT inject hardware battery/CPU stats unless the user explicitly used words like "battery", "charge", "cpu", "ram".
+MODE A: CONVERSATION & CASUAL CHAT (NO ACTIONS):
+- If the user is chatting, complimenting, asking opinions, or joking (e.g., "Mera ek dost hai uske gameplay ki tareef karo"):
+  -> Return "actions": []
+  -> Do NOT open YouTube or trigger any searches!
+
+MODE B: EXPLICIT COMMANDS ONLY:
+- "Open YouTube" -> OPEN_BROWSER with url "https://www.youtube.com" (query: null).
+- "Play [song]" -> YOUTUBE_DIRECT_PLAY with clean query.
+- "Google search [X]" -> GOOGLE_CUSTOM_SEARCH with query.
+- "Website / File bana do" -> CREATE_FILE with full content and filename.
 
 STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "transcribedUserSpeech": "YouTube open karo",
-  "spokenResponse": "Sir, maine Chrome me YouTube open kar diya hai.",
+  "spokenResponse": "Haan boss, direct play kar rahi hoon. Enjoy karo!",
   "actions": [
     {
-      "type": "OPEN_BROWSER",
+      "type": "YOUTUBE_DIRECT_PLAY",
       "payload": {
-        "url": "https://www.youtube.com",
-        "query": null,
+        "query": "Believer Imagine Dragons",
         "browser": "chrome"
       }
     }
   ]
 }
+
+Always respond in natural, polite Roman Urdu or English matching the user.
 `;
 
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
@@ -56,7 +63,6 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
     for (const turn of rawHistory) {
       if (!turn) continue;
       const text = (turn.text || turn.content || '').trim();
-      // Remove any previously stuck loop phrases from context
       if (!text || text.includes('[Voice Directive]') || text.includes('آپ کیا پوچھنا چاہتے ہیں')) continue;
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
@@ -82,7 +88,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 
   const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
     ? currentParts
-    : [{ text: 'Listen to the audio directive and execute.' }];
+    : [{ text: 'Listen to the directive and execute.' }];
 
   sanitized.push({
     role: 'user',
@@ -97,7 +103,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Universal Stream Runner with 16kHz PCM WAV Audio Decoding
+ * Universal Stream Runner with Direct Dynamic Key Loading
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -125,7 +131,7 @@ async function runAIInferenceStream(
 
   const provider = config.provider || 'gemini';
 
-  // Google Gemini Audio & Text Engine
+  // 1. Google Gemini Flash Streaming Engine
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -137,7 +143,6 @@ async function runAIInferenceStream(
 
     const currentParts = [];
 
-    // کرسٹل کلیئر 16kHz WAV آڈیو ان پٹ
     if (audioBase64) {
       currentParts.push({
         inlineData: {
@@ -146,7 +151,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: `Listen to this clear 16kHz WAV recording of user voice. Transcribe user speech accurately into "transcribedUserSpeech", execute the action, and respond in required JSON schema.`
+        text: `Listen to this clear 16kHz WAV user recording. Transcribe user speech into "transcribedUserSpeech", formulate direct YouTube/OS actions, and output strict JSON.`
       });
     }
 
@@ -226,7 +231,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     });
   }
 
-  messages.push({ role: 'user', content: userPrompt || 'Respond directly.' });
+  messages.push({ role: 'user', content: userPrompt });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
