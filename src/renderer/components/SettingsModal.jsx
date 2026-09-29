@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Sliders, AlertCircle, CheckCircle, Server, Key, Cpu, BatteryCharging, ExternalLink } from 'lucide-react';
+import {
+  X,
+  Save,
+  Sliders,
+  CheckCircle,
+  Server,
+  Key,
+  Cpu,
+  BatteryCharging,
+  ExternalLink,
+  Flame,
+  Gamepad2
+} from 'lucide-react';
 
 export default function SettingsModal({
   isOpen,
@@ -7,12 +19,12 @@ export default function SettingsModal({
   currentSettings,
   onSave
 }) {
-  const [formData, setFormData] = useState(currentSettings);
+  const [formData, setFormData] = useState(currentSettings || {});
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [liveHardware, setLiveHardware] = useState(null);
 
   useEffect(() => {
-    setFormData(currentSettings);
+    setFormData(currentSettings || {});
   }, [currentSettings]);
 
   useEffect(() => {
@@ -40,6 +52,7 @@ export default function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xl flex items-center justify-center p-4">
+      {/* Modal Container with Amber / Orange Cyberpunk Glow */}
       <div className="w-full max-w-2xl bg-[#0d0f17] border border-[#ff7700]/50 rounded-3xl shadow-[0_0_60px_rgba(255,119,0,0.25)] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#ff7700]/20 bg-[#121622]">
@@ -58,7 +71,7 @@ export default function SettingsModal({
         </div>
 
         <div className="p-6 space-y-6 overflow-y-auto max-h-[75vh]">
-          {/* Provider Selection Tabs */}
+          {/* 1. Cognitive Gateway Tabs */}
           <div>
             <label className="text-xs font-mono uppercase text-[#ffaa00] block mb-2 font-semibold tracking-wider">
               Primary Cognitive Gateway
@@ -85,12 +98,12 @@ export default function SettingsModal({
             </div>
           </div>
 
-          {/* 1. Google Gemini Config (User supplies their own key) */}
+          {/* 2. Google Gemini Config (User enters their own API Key) */}
           {formData.provider === 'gemini' && (
             <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-mono uppercase text-slate-300 block">
-                  Your Google Gemini API Key <span className="text-[#ff7700]">*Required</span>
+                  Google Gemini API Key <span className="text-[#ff7700]">*Required</span>
                 </label>
                 <a
                   href="https://aistudio.google.com/app/apikey"
@@ -117,14 +130,14 @@ export default function SettingsModal({
                 <input
                   list="gemini-models"
                   type="text"
-                  value={formData.geminiModel || 'gemini-2.5-flash'}
+                  value={formData.geminiModel || 'gemini-2.0-flash'}
                   onChange={(e) => handleChange('geminiModel', e.target.value)}
-                  placeholder="gemini-2.5-flash, gemini-2.0-flash"
+                  placeholder="gemini-2.0-flash, gemini-2.5-flash"
                   className="w-full px-3.5 py-2.5 bg-[#090b10] border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-[#ff7700] font-mono"
                 />
                 <datalist id="gemini-models">
-                  <option value="gemini-2.5-flash" />
                   <option value="gemini-2.0-flash" />
+                  <option value="gemini-2.5-flash" />
                   <option value="gemini-1.5-pro" />
                   <option value="gemini-1.5-flash" />
                 </datalist>
@@ -132,7 +145,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* 2. OpenRouter Config */}
+          {/* 3. OpenRouter Config */}
           {formData.provider === 'openrouter' && (
             <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4 shadow-[0_0_20px_rgba(255,119,0,0.15)]">
               <div>
@@ -168,7 +181,7 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* 3. Custom / Local API Config */}
+          {/* 4. Custom / Groq Endpoint */}
           {formData.provider === 'custom' && (
             <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 space-y-4 shadow-[0_0_20px_rgba(255,119,0,0.15)]">
               <div>
@@ -215,7 +228,37 @@ export default function SettingsModal({
             </div>
           )}
 
-          {/* Live Hardware Telemetry Panel */}
+          {/* 5. Roast / Gamer Mode Toggle */}
+          <div className="p-4 rounded-2xl bg-[#121622] border border-[#ff7700]/30 flex items-center justify-between">
+            <div className="flex items-start space-x-3">
+              <div className={`p-2 rounded-xl border transition ${
+                formData.isRoastModeEnabled
+                  ? 'bg-[#ff7700]/20 border-[#ff7700] text-[#ffaa00] shadow-[0_0_12px_rgba(255,119,0,0.4)]'
+                  : 'bg-[#090b10] border-slate-800 text-slate-500'
+              }`}>
+                {formData.isRoastModeEnabled ? <Flame className="w-5 h-5 text-[#ff7700]" /> : <Gamepad2 className="w-5 h-5" />}
+              </div>
+              <div>
+                <span className="text-xs font-mono font-bold text-[#ffaa00] uppercase block">
+                  Roast Mode / Gamer Persona
+                </span>
+                <span className="text-[11px] font-mono text-slate-400 block mt-0.5">
+                  Enable sarcastic gamer banter, savage roasts, and noob teasing in Roman Urdu.
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleChange('isRoastModeEnabled', !formData.isRoastModeEnabled)}
+              className={`w-12 h-6 flex items-center rounded-full p-1 transition duration-300 cursor-pointer ${
+                formData.isRoastModeEnabled ? 'bg-[#ff7700] justify-end shadow-[0_0_12px_rgba(255,119,0,0.5)]' : 'bg-slate-800 justify-start'
+              }`}
+            >
+              <div className="bg-white w-4 h-4 rounded-full shadow-md transform transition" />
+            </button>
+          </div>
+
+          {/* 6. Live Laptop Hardware Telemetry Panel */}
           {liveHardware && (
             <div className="p-4 rounded-2xl bg-[#090b10] border border-slate-800 space-y-2">
               <div className="flex items-center space-x-2 text-xs font-mono text-[#ffaa00] font-bold">
@@ -226,16 +269,16 @@ export default function SettingsModal({
                 <div>
                   <span className="text-slate-500 block">Battery:</span>
                   <span className="text-[#ffaa00] font-bold">
-                    {liveHardware.battery.percent}% {liveHardware.battery.isCharging ? '(Charging)' : '(On Battery)'}
+                    {liveHardware.battery?.percent}% {liveHardware.battery?.isCharging ? '(Charging)' : '(On Battery)'}
                   </span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">CPU Load / Temp:</span>
-                  <span className="text-white font-bold">{liveHardware.cpu.loadPercent}% / {liveHardware.cpu.tempC}°C</span>
+                  <span className="text-white font-bold">{liveHardware.cpu?.loadPercent}% / {liveHardware.cpu?.tempC}°C</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block">Memory (RAM):</span>
-                  <span className="text-white font-bold">{liveHardware.ram.usedGb}GB / {liveHardware.ram.totalGb}GB</span>
+                  <span className="text-white font-bold">{liveHardware.ram?.usedGb}GB / {liveHardware.ram?.totalGb}GB</span>
                 </div>
               </div>
             </div>
