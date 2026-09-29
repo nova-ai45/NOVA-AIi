@@ -5,7 +5,7 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 🚨 API CREDENTIAL PLACEHOLDERS (AS SPECIFIED BY ARCHITECTURE)
+// 🚨 EXISTING API CREDENTIALS (KEPT INTACT - NO NEW KEYS REQUIRED)
 // ============================================================================
 const YOUTUBE_DATA_API_KEY = "AIzaSyAKoG0eSXgMaIg4xWQSY7t9aof2dFW3zlw";
 const GOOGLE_CUSTOM_SEARCH_API_KEY = "AIzaSyC63h7RvDVgpqDfiD_cKNteLp5QUlwzbEs";
@@ -25,13 +25,11 @@ function getDesktopDir() {
   return app.getPath('desktop');
 }
 
-// Tracks the currently active project file to enable in-place revisions without duplicating files
+// Tracks the active project file to enable in-place revisions without creating duplicates
 let currentActiveProjectFile = null;
 
 /**
  * 1. Live Notepad Code Streaming & In-Place File Updating
- * - If user requests modifications, overwrites the SAME file in-place
- * - Launches Notepad visually and streams code to the screen
  */
 async function liveNotepadCodeStream(filename, content, targetDirectory = null, isUpdate = false, logCallback = () => {}, mainWindow = null) {
   try {
@@ -40,7 +38,6 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       fs.mkdirSync(baseDir, { recursive: true });
     }
 
-    // Determine target file: prioritize same file for revisions
     let resolvedFilename = filename;
     if (isUpdate && currentActiveProjectFile && fs.existsSync(currentActiveProjectFile)) {
       resolvedFilename = path.basename(currentActiveProjectFile);
@@ -51,9 +48,8 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
     const fullPath = path.join(baseDir, resolvedFilename);
     currentActiveProjectFile = fullPath;
 
-    logCallback('automation', `[Notepad Typer] In-Place Target: "${fullPath}" (Revision: ${isUpdate ? 'YES' : 'NEW'})`);
+    logCallback('automation', `[Notepad Typer] Target: "${fullPath}" (Revision: ${isUpdate ? 'YES' : 'NEW'})`);
 
-    // Stream code chunks to UI Console
     if (mainWindow && !mainWindow.isDestroyed()) {
       const chunkSize = 35;
       for (let i = 0; i < content.length; i += chunkSize) {
@@ -72,13 +68,10 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       });
     }
 
-    // Write file in-place directly on disk
     fs.writeFileSync(fullPath, content, 'utf-8');
 
-    // Launch OS Notepad with the generated/updated file
     if (process.platform === 'win32') {
       exec(`notepad.exe "${fullPath}"`);
-      // Bring notepad to front
       setTimeout(() => {
         const psFocus = `
           $wshell = New-Object -ComObject wscript.shell;
@@ -97,14 +90,27 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
 }
 
 /**
- * 2. YouTube Data API v3 Direct Video Search & Autoplay
- * - Queries YouTube API for the top relevant video ID and launches directly into playback
+ * 2. YouTube Data API v3 Direct Search & Instant Autoplay
+ * - Uses existing YOUTUBE_DATA_API_KEY
+ * - Searches YouTube Data API v3 for the top matching videoId
+ * - Launches direct playback URL: https://www.youtube.com/watch?v=${videoId}
+ * - Cleanly falls back to YouTube search results if API call fails or returns empty
  */
-async function searchAndPlayYouTubeDirect(query, logCallback = () => {}) {
+async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browserName = 'chrome') {
   return new Promise((resolve) => {
-    logCallback('automation', `[YouTube API v3] Searching top video for: "${query}"`);
+    // Clean query string (strip unwanted leading/trailing symbols)
+    const cleanQuery = (query || '').replace(/^(play|chalao|search)\s+/i, '').trim();
 
-    const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=${encodeURIComponent(query)}&type=video&key=${YOUTUBE_DATA_API_KEY}`;
+    if (!cleanQuery) {
+      const defaultUrl = 'https://www.youtube.com';
+      logCallback('automation', `[YouTube] No query provided. Launching YouTube home.`);
+      launchBrowserUrl(defaultUrl, browserName);
+      return resolve({ success: true, url: defaultUrl });
+    }
+
+    logCallback('automation', `[YouTube Data API v3] Searching top video for: "${cleanQuery}"`);
+
+    const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanQuery)}&type=video&maxResults=1&key=${YOUTUBE_DATA_API_KEY}`;
 
     https.get(apiUrl, (res) => {
       let data = '';
@@ -113,39 +119,56 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}) {
         try {
           const json = JSON.parse(data);
           const videoId = json.items && json.items[0]?.id?.videoId;
+
           if (videoId) {
-            const videoUrl = `https://www.youtube.com/watch?v=${videoId}&autoplay=1`;
-            logCallback('automation', `[YouTube Direct Play] Found video (${videoId}) -> Launching Chrome`);
-            if (process.platform === 'win32') {
-              exec(`start chrome "${videoUrl}"`);
-            } else {
-              shell.openExternal(videoUrl);
-            }
-            resolve({ success: true, videoId, videoUrl });
+            // Success: Direct Watch URL with autoplay
+            const directPlayUrl = `https://www.youtube.com/watch?v=${videoId}&autoplay=1`;
+            const videoTitle = json.items[0]?.snippet?.title || cleanQuery;
+            logCallback('automation', `[YouTube API v3] Found: "${videoTitle}" (${videoId}) -> Starting Playback`);
+            
+            launchBrowserUrl(directPlayUrl, browserName);
+            resolve({ success: true, videoId, videoTitle, url: directPlayUrl });
           } else {
-            // Fallback to standard web search if no API result
-            const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-            if (process.platform === 'win32') {
-              exec(`start chrome "${fallbackUrl}"`);
-            } else {
-              shell.openExternal(fallbackUrl);
-            }
-            resolve({ success: true, fallbackUrl });
+            // No video items found -> Graceful fallback to search results
+            logCallback('automation', `[YouTube API] No direct video ID returned. Falling back to search results.`);
+            const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+            launchBrowserUrl(fallbackUrl, browserName);
+            resolve({ success: true, fallback: true, url: fallbackUrl });
           }
-        } catch (e) {
-          resolve({ success: false, error: e.message });
+        } catch (err) {
+          // JSON Parse / Data Error -> Graceful fallback
+          logCallback('error', `[YouTube API Parse Error]: ${err.message}. Falling back to web search.`);
+          const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+          launchBrowserUrl(fallbackUrl, browserName);
+          resolve({ success: true, fallback: true, url: fallbackUrl });
         }
       });
     }).on('error', (err) => {
-      logCallback('error', `[YouTube API Error]: ${err.message}`);
-      resolve({ success: false, error: err.message });
+      // Network / Request Error -> Graceful fallback
+      logCallback('error', `[YouTube API Network Error]: ${err.message}. Falling back to web search.`);
+      const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+      launchBrowserUrl(fallbackUrl, browserName);
+      resolve({ success: true, fallback: true, url: fallbackUrl });
     });
   });
 }
 
 /**
+ * Helper to launch URL in Chrome (Windows) or system default browser
+ */
+function launchBrowserUrl(targetUrl, browserName = 'chrome') {
+  if (process.platform === 'win32' && (browserName || 'chrome').toLowerCase().includes('chrome')) {
+    exec(`start chrome "${targetUrl}"`, (err) => {
+      if (err) shell.openExternal(targetUrl);
+    });
+  } else {
+    shell.openExternal(targetUrl);
+  }
+}
+
+/**
  * 3. Google Custom Search JSON API
- * - Queries Google Custom Search Engine (API Key + CX ID) for live web facts
+ * - Uses existing GOOGLE_CUSTOM_SEARCH_API_KEY & GOOGLE_SEARCH_ENGINE_CX
  */
 async function queryGoogleCustomSearch(query, logCallback = () => {}) {
   return new Promise((resolve) => {
@@ -179,7 +202,7 @@ async function queryGoogleCustomSearch(query, logCallback = () => {}) {
 }
 
 /**
- * 4. Native Screen Touch, Click & Long-Press Drivers (Windows Native User32)
+ * 4. Native Screen Touch, Click, Long-Press & Scroll
  */
 async function clickAt(x, y, button = 'left', logCallback = () => {}) {
   return new Promise((resolve) => {
@@ -302,14 +325,20 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
 }
 
 /**
- * 5. Dedicated Browser Launcher
+ * 5. General Browser Launcher
+ * - If YouTube search query is provided, seamlessly routes through searchAndPlayYouTubeDirect
  */
 async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
     let finalUrl = url || 'https://www.google.com';
-    const isDirectLink = finalUrl.includes('@') || finalUrl.includes('/watch') || finalUrl.includes('/channel/');
+    const isChannelOrDirect = finalUrl.includes('@') || finalUrl.includes('/watch');
 
-    if (!isDirectLink && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
+    // Route YouTube search queries directly through YouTube Data API v3 for instant playback
+    if (!isChannelOrDirect && finalUrl.includes('youtube.com') && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
+      return await searchAndPlayYouTubeDirect(searchQuery.trim(), logCallback, browserName);
+    }
+
+    if (!isChannelOrDirect && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
       finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery.trim())}`;
     }
 
@@ -318,15 +347,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
     }
 
     logCallback('automation', `[Browser Launcher] Launching: "${finalUrl}" in ${browserName}`);
-
-    if (process.platform === 'win32' && browserName.toLowerCase().includes('chrome')) {
-      exec(`start chrome "${finalUrl}"`, (err) => {
-        if (err) shell.openExternal(finalUrl);
-      });
-      return { success: true, launchedUrl: finalUrl };
-    }
-
-    await shell.openExternal(finalUrl);
+    launchBrowserUrl(finalUrl, browserName);
     return { success: true, launchedUrl: finalUrl };
   } catch (err) {
     logCallback('error', `[Browser Launch Fault]: ${err.message}`);
@@ -342,6 +363,17 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
   logCallback('system', `Dispatching Action: [${type}]`);
 
   switch (type) {
+    case 'YOUTUBE_DIRECT_PLAY':
+    case 'PLAY_YOUTUBE_VIDEO':
+      return await searchAndPlayYouTubeDirect(
+        payload.query || payload.searchQuery || payload.song || payload.title,
+        logCallback,
+        payload.browser || 'chrome'
+      );
+
+    case 'GOOGLE_CUSTOM_SEARCH':
+      return await queryGoogleCustomSearch(payload.query, logCallback);
+
     case 'CREATE_FILE':
     case 'CREATE_AND_STREAM_CODE':
     case 'UPDATE_FILE_IN_PLACE':
@@ -369,12 +401,6 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
 
     case 'SCROLL_SCREEN':
       return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
-
-    case 'YOUTUBE_DIRECT_PLAY':
-      return await searchAndPlayYouTubeDirect(payload.query || payload.searchQuery, logCallback);
-
-    case 'GOOGLE_CUSTOM_SEARCH':
-      return await queryGoogleCustomSearch(payload.query, logCallback);
 
     case 'OPEN_BROWSER':
       return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
