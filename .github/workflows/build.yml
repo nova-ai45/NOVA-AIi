@@ -1,0 +1,59 @@
+name: Build & Release NOVA AI Windows Installer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # 1. Repository Checkout
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      # 2. Node.js 20 Setup
+      - name: Setup Node.js 20.x Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 3. Dependencies Installation
+      - name: Install Project Dependencies
+        run: npm install
+
+      # 4. Vite React Bundle Build
+      - name: Compile React Frontend Application
+        run: npm run build:renderer
+
+      # 5. Electron Unpacked Binary Generation
+      - name: Unpack Electron Executable Architecture
+        run: npx electron-builder --win --dir
+
+      # 6. Install Inno Setup via Chocolatey
+      - name: Install Inno Setup Compiler
+        shell: powershell
+        run: |
+          choco install innosetup --no-progress -y
+
+      # 7. Compile Windows Setup Wizard (.exe)
+      - name: Compile True Windows Installer with Inno Setup
+        shell: powershell
+        run: |
+          $isccPath = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $isccPath)) {
+            $isccPath = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          }
+          Write-Host "Compiling setup.iss using: $isccPath"
+          & $isccPath setup.iss
+
+      # 8. Upload Installer (.exe) Artifact
+      - name: Upload Binary Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-AI-Setup-Windows
+          path: release-installer/NOVA-AI-Setup.exe
