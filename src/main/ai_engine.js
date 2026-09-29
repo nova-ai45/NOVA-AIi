@@ -7,55 +7,64 @@ const {
   GOOGLE_SEARCH_ENGINE_CX
 } = require('./automation');
 
-const SYSTEM_INSTRUCTION = `
-You are NOVA AI, an advanced, witty, and loyal personal desktop companion (Zara / modern reel style).
+/**
+ * Dynamically constructs the system instruction based on the Gamer / Roast Mode toggle.
+ */
+function getSystemInstruction(isRoastModeEnabled = false) {
+  const personalityBlock = isRoastModeEnabled
+    ? `You are NOVA AI, a funny, extremely sarcastic, witty, and slightly rude roast-master PC Assistant. You talk in Roman Urdu mixed with gaming slang. Roast the user if they ask about bad aim, missed headshots, or gaming lag. Call them 'Bot' or 'Noob' in a funny way. Keep responses short and snappy (1-2 sentences max).`
+    : `You are NOVA AI, an advanced, witty, and loyal PC assistant. Respond respectfully, smoothly, and concisely in Roman Urdu or English depending on user input.`;
+
+  return `
+${personalityBlock}
 
 =======================================================
-🎥 YOUTUBE SEARCH & PLAYBACK RULES (DATA API v3):
+🎥 YOUTUBE DIRECT SEARCH & PLAYBACK DIRECTIVE:
 =======================================================
-When the user asks to play a song, video, or says "play [song/video name]" or "[song] chala do / play karo":
-1. Extract the clean song/video title.
-2. Return the action "YOUTUBE_DIRECT_PLAY":
+Whenever the user commands to play a song, video, track, or audio (e.g. "play [X]", "[X] chalao", "[X] sunao", "laga do"):
+1. Extract the exact, clean song/video title without filler words.
+2. Return action "YOUTUBE_DIRECT_PLAY":
    {
      "type": "YOUTUBE_DIRECT_PLAY",
      "payload": {
-       "query": "Believer Imagine Dragons",
+       "query": "<exact song or video name>",
        "browser": "chrome"
      }
    }
-3. The system will automatically use the YouTube Data API v3 key to retrieve the exact video ID and launch "https://www.youtube.com/watch?v={videoId}&autoplay=1" directly in Chrome!
+3. The system will search YouTube Data API v3 and immediately launch the direct watch link (https://www.youtube.com/watch?v=videoId).
 
 =======================================================
-🚨 CRITICAL INTENT RECOGNITION (TALK VS EXECUTE):
+🚨 CONVERSATION VS EXPLICIT SYSTEM COMMANDS:
 =======================================================
-MODE A: CONVERSATION & CASUAL CHAT (NO ACTIONS):
-- If the user is chatting, complimenting, asking opinions, or joking (e.g., "Mera ek dost hai uske gameplay ki tareef karo"):
+MODE A: GENERAL CONVERSATION & ROASTING
+- If the user is chatting, asking casual questions, talking about games, asking for advice, or engaging in banter:
   -> Return "actions": []
-  -> Do NOT open YouTube or trigger any searches!
+  -> Do NOT open YouTube or trigger any system searches.
 
-MODE B: EXPLICIT COMMANDS ONLY:
-- "Open YouTube" -> OPEN_BROWSER with url "https://www.youtube.com" (query: null).
-- "Play [song]" -> YOUTUBE_DIRECT_PLAY with clean query.
-- "Google search [X]" -> GOOGLE_CUSTOM_SEARCH with query.
-- "Website / File bana do" -> CREATE_FILE with full content and filename.
+MODE B: EXPLICIT OS COMMANDS ONLY
+- "Open YouTube" (home page only) -> OPEN_BROWSER with url "https://www.youtube.com", query: null.
+- "Play [song name]" -> YOUTUBE_DIRECT_PLAY with clean query.
+- "Google search [query]" -> GOOGLE_CUSTOM_SEARCH with query.
+- "Create file / website" -> CREATE_FILE with filename and complete code content.
+- "Click / Scroll" -> CLICK_AT / SCROLL_SCREEN with coordinates/direction.
+
+CREATOR IDENTITY:
+- Creator / Developer: Hasnain (@TheHasnainGamer1). Mention Hasnain ONLY if directly asked who created or developed you.
 
 STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "spokenResponse": "Haan boss, direct play kar rahi hoon. Enjoy karo!",
-  "actions": [
-    {
-      "type": "YOUTUBE_DIRECT_PLAY",
-      "payload": {
-        "query": "Believer Imagine Dragons",
-        "browser": "chrome"
-      }
-    }
-  ]
+  "spokenResponse": "Gamer mode response here...",
+  "actions": []
+}
+`;
 }
 
-Always respond in natural, polite Roman Urdu or English matching the user.
-`;
-
+/**
+ * Sanitizes multi-turn chat history to strictly adhere to Gemini API constraints:
+ * - Alternates strictly between 'user' and 'model'.
+ * - Guarantees the payload never ends with a 'model' turn.
+ * - Strips empty and corrupt turns.
+ */
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   const sanitized = [];
 
@@ -88,7 +97,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 
   const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
     ? currentParts
-    : [{ text: 'Listen to the directive and execute.' }];
+    : [{ text: 'Execute current user directive.' }];
 
   sanitized.push({
     role: 'user',
@@ -103,7 +112,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Universal Stream Runner with Direct Dynamic Key Loading
+ * Universal Stream Runner with 120-Second Request Timeout & Gemini 2.0 Flash
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -130,8 +139,10 @@ async function runAIInferenceStream(
   }
 
   const provider = config.provider || 'gemini';
+  const isRoastModeEnabled = Boolean(config.isRoastModeEnabled);
+  const activeSystemInstruction = getSystemInstruction(isRoastModeEnabled);
 
-  // 1. Google Gemini Flash Streaming Engine
+  // 1. Google Gemini 2.0 Flash (Stable Endpoint with 120s Fetch Timeout)
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -139,7 +150,7 @@ async function runAIInferenceStream(
     }
 
     const genAI = new GoogleGenerativeAI(userGeminiKey);
-    const modelName = config.geminiModel || 'gemini-2.5-flash';
+    const modelName = config.geminiModel || 'gemini-2.0-flash';
 
     const currentParts = [];
 
@@ -151,7 +162,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: `Listen to this clear 16kHz WAV user recording. Transcribe user speech into "transcribedUserSpeech", formulate direct YouTube/OS actions, and output strict JSON.`
+        text: `Listen to user speech recording. If asking to play a song/video, generate YOUTUBE_DIRECT_PLAY. Output strict JSON.`
       });
     }
 
@@ -170,11 +181,15 @@ async function runAIInferenceStream(
 
     const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
 
-    const model = genAI.getGenerativeModel({
-      model: modelName,
-      systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig: { responseMimeType: 'application/json' }
-    });
+    // Initialized with a 120,000ms (120s) request timeout to prevent fetch failures
+    const model = genAI.getGenerativeModel(
+      {
+        model: modelName,
+        systemInstruction: activeSystemInstruction,
+        generationConfig: { responseMimeType: 'application/json' }
+      },
+      { timeout: 120000 }
+    );
 
     try {
       const responseStream = await model.generateContentStream({ contents: sanitizedContents });
@@ -188,23 +203,30 @@ async function runAIInferenceStream(
 
       return JSON.parse(fullText);
     } catch (err) {
-      const isQuotaError =
+      const isQuotaOrTimeout =
         err.message.includes('429') ||
         err.message.includes('quota') ||
         err.message.includes('ResourceExhausted') ||
-        err.message.includes('503');
+        err.message.includes('503') ||
+        err.message.includes('fetch failed');
 
-      if (isQuotaError && config.openrouterKey) {
-        return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
+      if (isQuotaOrTimeout && config.openrouterKey) {
+        return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, isRoastModeEnabled, onChunkCallback);
       }
       throw err;
     }
   }
 
-  return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, onChunkCallback);
+  // 2. OpenRouter Gateway Fallback
+  if (provider === 'openrouter') {
+    return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, isRoastModeEnabled, onChunkCallback);
+  }
+
+  // 3. Custom / Groq Endpoint
+  return await queryCustomStream(promptText, imageBase64, config, conversationHistory, isRoastModeEnabled, onChunkCallback);
 }
 
-async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], onChunkCallback = () => {}) {
+async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], isRoastModeEnabled = false, onChunkCallback = () => {}) {
   const userOpenRouterKey = (config.openrouterKey || '').trim();
   if (!userOpenRouterKey) {
     throw new Error('OpenRouter API key missing. Please enter it in Settings.');
@@ -213,6 +235,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: userOpenRouterKey,
+    timeout: 120000,
     defaultHeaders: {
       'HTTP-Referer': 'https://nova-ai.desktop',
       'X-Title': 'NOVA AI Assistant'
@@ -220,7 +243,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
   });
 
   const selectedModel = config.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free';
-  const messages = [{ role: 'system', content: SYSTEM_INSTRUCTION }];
+  const messages = [{ role: 'system', content: getSystemInstruction(isRoastModeEnabled) }];
 
   const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
   for (const turn of memorySlice) {
@@ -231,10 +254,50 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
     });
   }
 
-  messages.push({ role: 'user', content: userPrompt });
+  messages.push({ role: 'user', content: userPrompt || 'Respond directly.' });
 
   const stream = await client.chat.completions.create({
     model: selectedModel,
+    messages,
+    response_format: { type: 'json_object' },
+    stream: true
+  });
+
+  let fullText = '';
+  for await (const chunk of stream) {
+    const text = chunk.choices[0]?.delta?.content || '';
+    fullText += text;
+    onChunkCallback(text);
+  }
+
+  return JSON.parse(fullText);
+}
+
+async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], isRoastModeEnabled = false, onChunkCallback = () => {}) {
+  const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
+  const userCustomKey = (config.customKey || '').trim();
+
+  const client = new OpenAI({
+    baseURL,
+    apiKey: userCustomKey || 'dummy',
+    timeout: 120000
+  });
+
+  const messages = [{ role: 'system', content: getSystemInstruction(isRoastModeEnabled) }];
+  const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
+
+  for (const turn of memorySlice) {
+    if (!turn || !turn.text) continue;
+    messages.push({
+      role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
+      content: turn.text
+    });
+  }
+
+  messages.push({ role: 'user', content: userPrompt || 'Process context.' });
+
+  const stream = await client.chat.completions.create({
+    model: config.customModel || 'llama-3.3-70b-versatile',
     messages,
     response_format: { type: 'json_object' },
     stream: true
