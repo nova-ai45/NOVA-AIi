@@ -51,7 +51,7 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 let mainWindow = null;
 
 // ============================================================================
-// 🧠 PERSISTENT LOCAL MEMORY: memory.json in userData directory
+// 🧠 LOCAL PERSISTENT MEMORY: memory.json in userData directory
 // ============================================================================
 function getMemoryFilePath() {
   const userDir = app.getPath('userData');
@@ -385,9 +385,17 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master AI Command Execution Pipeline (With Guaranteed Speech Output)
+  // Master AI Command Execution Pipeline
   ipcMain.handle('nova:processCommand', async (_, payload) => {
     const settings = readSettings();
+
+    // Dynamically synchronize the roastMode flag from incoming payload into settings
+    if (payload?.isRoastModeEnabled !== undefined) {
+      settings.isRoastModeEnabled = payload.isRoastModeEnabled;
+    }
+    if (payload?.roastMode !== undefined) {
+      settings.isRoastModeEnabled = payload.roastMode;
+    }
 
     const text = payload?.text || '';
     const audioBase64 = payload?.audioBase64 || null;
@@ -424,7 +432,6 @@ app.whenReady().then(() => {
         throw new Error('AI Engine subsystem is unavailable.');
       }
 
-      // Safe Object Parameter Passing
       const aiResponse = await Promise.race([
         aiEngine.runAIInferenceStream({
           userPrompt: text,
@@ -453,11 +460,11 @@ app.whenReady().then(() => {
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
-      // ALWAYS Synthesize Neural Voice (hi-IN-SwaraNeural)
+      // Generate Neural Voice using Swara/Uzma profile
       let audioResult = null;
       const responseToSpeak = (aiResponse?.spokenResponse || '').trim();
 
-      if (responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
+      if (settings.autoSpeak && responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
         try {
           audioResult = await ttsEngine.synthesizeNeuralSpeech(
             responseToSpeak,
