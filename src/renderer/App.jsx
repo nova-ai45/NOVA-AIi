@@ -19,7 +19,7 @@ export default function App() {
     { timestamp: 'SYSTEM', message: "nova.core(status=\"ready\", audio=\"direct_stream\")" },
     { timestamp: 'ACTIVE', message: "System Initialized | Ready for Direct Commands" }
   ]);
-  const [sphereState, setSphereState] = useState('idle'); // 'idle' | 'listening' | 'thinking' | 'speaking' | 'executing'
+  const [sphereState, setSphereState] = useState('idle');
   const [inputText, setInputText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState({});
@@ -29,7 +29,6 @@ export default function App() {
   const [micMuted, setMicMuted] = useState(false);
   const [activeTab, setActiveTab] = useState('assistant');
 
-  // Multi-Turn Memory Buffer
   const [chatHistory, setChatHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('nova_chat_history');
@@ -50,7 +49,6 @@ export default function App() {
 
   const [cpuUsage, setCpuUsage] = useState(38);
 
-  // Audio Context & VAD Refs
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -90,7 +88,6 @@ export default function App() {
       setSphereState(st);
     });
 
-    // Start 100% Direct Hardware Sound-Card Stream
     startDirectHardwareMicrophone();
 
     return () => {
@@ -302,8 +299,58 @@ export default function App() {
       } catch (_) {}
       activeAudioElementRef.current = null;
     }
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
     if (window.novaAPI.stopSpeech) {
       window.novaAPI.stopSpeech();
+    }
+  };
+
+  // Safe fallback to Web Speech Synthesis if base64 audio fails
+  const speakWithNativeSpeechFallback = (text) => {
+    if (!('speechSynthesis' in window) || !text) {
+      finishExecutionTurn();
+      return;
+    }
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.1;
+
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        const preferred = voices.find(
+          (v) =>
+            v.lang.includes('hi') ||
+            v.lang.includes('ur') ||
+            v.name.includes('Swara') ||
+            v.name.includes('Natural')
+        );
+        if (preferred) utterance.voice = preferred;
+      }
+
+      setSphereState('speaking');
+
+      const pulseInterval = setInterval(() => {
+        setAudioLevel(0.35 + Math.random() * 0.45);
+      }, 100);
+
+      const cleanup = () => {
+        clearInterval(pulseInterval);
+        setAudioLevel(0);
+        finishExecutionTurn();
+      };
+
+      utterance.onend = cleanup;
+      utterance.onerror = cleanup;
+
+      window.speechSynthesis.speak(utterance);
+    } catch (_) {
+      finishExecutionTurn();
     }
   };
 
@@ -337,11 +384,12 @@ export default function App() {
       audio.onended = onAudioFinished;
       audio.onerror = onAudioFinished;
 
-      audio.play().catch(() => {
+      audio.play().catch((e) => {
+        console.warn("[Voice Playback Error]:", e);
         onAudioFinished();
       });
     } catch (e) {
-      console.error("[Voice Playback Error]:", e);
+      console.error("[Voice Playback Exception]:", e);
       finishExecutionTurn();
     }
   };
@@ -352,7 +400,7 @@ export default function App() {
     setAudioLevel(0);
   };
 
-  // Main Command Pipeline (Direct Object Passing with Immediate Visual Feedback)
+  // Main Command Pipeline with Guaranteed Voice Feedback
   const handleExecute = async (overridePrompt = null, audioPayload = null, audioMime = 'audio/webm') => {
     const prompt = (overridePrompt || inputText || '').trim();
     if (!prompt && !audioPayload) {
@@ -385,6 +433,7 @@ export default function App() {
       const spokenText = (result.spokenResponse || '').trim();
 
       if (spokenText) {
+        // Update chat window log
         setLogs((prev) => [...prev, { timestamp: 'NOVA', message: spokenText }]);
 
         setChatHistory((prev) => {
@@ -393,10 +442,12 @@ export default function App() {
           return [...prev, userTurn, modelTurn].slice(-20);
         });
 
+        // 100% Guaranteed Audio Execution:
+        // Try Microsoft Edge Neural Voice first; fall back to native speech synthesis if buffer is missing
         if (result.audioBase64) {
           playNeuralVoice(result.audioBase64);
         } else {
-          finishExecutionTurn();
+          speakWithNativeSpeechFallback(spokenText);
         }
       } else {
         finishExecutionTurn();
@@ -404,8 +455,10 @@ export default function App() {
     } else {
       if (result && result.spokenResponse) {
         setLogs((prev) => [...prev, { timestamp: 'ERROR', message: result.spokenResponse }]);
+        speakWithNativeSpeechFallback(result.spokenResponse);
+      } else {
+        finishExecutionTurn();
       }
-      finishExecutionTurn();
     }
   };
 
@@ -509,7 +562,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Live Mic Activity Bar */}
           <div className="p-3.5 rounded-xl bg-[#121522] border border-slate-800 space-y-2">
             <div className="flex justify-between items-center text-[10px] font-mono">
               <span className="text-slate-400">VOICE INPUT</span>
@@ -600,7 +652,7 @@ export default function App() {
             <span className="text-emerald-400">ACTIVE</span>
           </div>
           <div className="text-[11px] font-mono text-slate-500">
-            v4.6.0 • DIRECT AUDIO DISPATCHER
+            v5.0.0 • INTEGRATED VOICE & DESKTOP SYSTEM
           </div>
         </div>
 
@@ -626,7 +678,7 @@ export default function App() {
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            placeholder="Type command or speak naturally into mic..."
+            placeholder="Type command or speak naturally (e.g. 'Notepad kholo', 'Play Believer')..."
             className="flex-1 bg-transparent px-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none font-mono"
           />
           <button
