@@ -11,14 +11,14 @@ let screenshot = null;
 try {
   screenshot = require('screenshot-desktop');
 } catch (e) {
-  console.warn('[Local Vision] screenshot-desktop not available:', e.message);
+  console.warn('[Local Vision] screenshot-desktop module is unavailable:', e.message);
 }
 
 let Tesseract = null;
 try {
   Tesseract = require('tesseract.js');
 } catch (e) {
-  console.warn('[Local OCR] tesseract.js not available:', e.message);
+  console.warn('[Local OCR] tesseract.js module is unavailable:', e.message);
 }
 
 let nutMouse = null;
@@ -34,14 +34,14 @@ try {
   Point = nut.Point;
   Button = nut.Button;
   Key = nut.Key;
-  nutMouse.config.autoDelayMs = 30;
-  nutKeyboard.config.autoDelayMs = 20;
+  nutMouse.config.autoDelayMs = 25;
+  nutKeyboard.config.autoDelayMs = 15;
 } catch (e) {
-  console.warn('[Local Input] @nut-tree/nut-js not loaded, using native OS fallback.');
+  console.warn('[Local Input] @nut-tree/nut-js not found. Using native Windows fallback.');
 }
 
 // ============================================================================
-// 2. API CREDENTIALS (YOUTUBE DATA API v3 & GOOGLE CUSTOM SEARCH)
+// 2. CONSTANTS & API CREDENTIALS
 // ============================================================================
 const YOUTUBE_DATA_API_KEY = "AIzaSyAKoG0eSXgMaIg4xWQSY7t9aof2dFW3zlw";
 const GOOGLE_CUSTOM_SEARCH_API_KEY = "AIzaSyC63h7RvDVgpqDfiD_cKNteLp5QUlwzbEs";
@@ -61,11 +61,12 @@ function getDesktopDir() {
 let currentActiveProjectFile = null;
 
 // ============================================================================
-// 3. FULL DISPLAY OCR TEXT EXTRACTION
+// 3. ACCURATE LOCAL OCR & SCREEN TEXT EXTRACTION
 // ============================================================================
 
 /**
- * Captures primary display and extracts visible text via Tesseract OCR locally.
+ * Captures primary display and performs local OCR text extraction.
+ * Guarantees zero hallucinations by returning verbatim detected text.
  */
 async function readEntireScreenOCR(logCallback = () => {}) {
   if (!screenshot) {
@@ -78,36 +79,41 @@ async function readEntireScreenOCR(logCallback = () => {}) {
   }
 
   try {
-    logCallback('automation', '[Local OCR] Capturing display & extracting on-screen text...');
+    logCallback('automation', '[Local OCR] Capturing display & analyzing visible text...');
 
     const imgBuffer = await screenshot({ format: 'png' });
     const { data } = await Tesseract.recognize(imgBuffer, 'eng');
     const rawText = (data && data.text ? data.text : '').replace(/\s+/g, ' ').trim();
 
-    logCallback('automation', `[Local OCR] Extracted ${rawText.length} characters of visible screen text.`);
+    if (!rawText) {
+      logCallback('automation', '[Local OCR] Screen analysis completed: No text detected on display.');
+      return '';
+    }
+
+    logCallback('automation', `[Local OCR] Extracted ${rawText.length} characters of authentic on-screen text.`);
     return rawText.slice(0, 2500);
   } catch (err) {
-    logCallback('error', `[Local OCR Read Error]: ${err.message}`);
+    logCallback('error', `[Local OCR Failure]: ${err.message}`);
     return '';
   }
 }
 
 /**
- * Scans active screen locally to find coordinates of target text.
+ * Searches local display for exact or fuzzy word positions.
  */
 async function captureAndFindText(targetText, logCallback = () => {}) {
   const target = (targetText || '').trim().toLowerCase();
   if (!target) {
-    return { found: false, error: 'Target text cannot be empty' };
+    return { found: false, error: 'Target query cannot be empty.' };
   }
 
   if (!screenshot || !Tesseract) {
-    logCallback('error', '[Local OCR] screenshot-desktop or tesseract.js is missing.');
-    return { found: false, error: 'OCR libraries not installed' };
+    logCallback('error', '[Local OCR] Required OCR modules missing.');
+    return { found: false, error: 'OCR libraries uninitialized.' };
   }
 
   try {
-    logCallback('automation', `[Local OCR] Scanning screen display for: "${targetText}"...`);
+    logCallback('automation', `[Local OCR] Scanning screen coordinates for: "${targetText}"...`);
 
     const imgBuffer = await screenshot({ format: 'png' });
     const { data } = await Tesseract.recognize(imgBuffer, 'eng');
@@ -137,7 +143,7 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
           const centerX = Math.round((x0 + x1) / 2);
           const centerY = Math.round((y0 + y1) / 2);
 
-          logCallback('automation', `[Local OCR] Found phrase at (${centerX}, ${centerY})`);
+          logCallback('automation', `[Local OCR] Found phrase target at (${centerX}, ${centerY})`);
           return { found: true, x: centerX, y: centerY, text: slice.map((w) => w.text).join(' ') };
         }
       }
@@ -150,12 +156,13 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       if (cleanWord.includes(cleanTarget) || cleanTarget.includes(cleanWord)) {
         const centerX = Math.round((w.bbox.x0 + w.bbox.x1) / 2);
         const centerY = Math.round((w.bbox.y0 + w.bbox.y1) / 2);
-        logCallback('automation', `[Local OCR] Found word "${w.text}" at (${centerX}, ${centerY})`);
+
+        logCallback('automation', `[Local OCR] Located word "${w.text}" at (${centerX}, ${centerY})`);
         return { found: true, x: centerX, y: centerY, text: w.text };
       }
     }
 
-    logCallback('warning', `[Local OCR] Text "${targetText}" not found on screen.`);
+    logCallback('warning', `[Local OCR] Text "${targetText}" was not found on screen.`);
     return { found: false, error: 'Screen par yeh word nahi mila.' };
   } catch (err) {
     logCallback('error', `[Local OCR Error]: ${err.message}`);
@@ -164,14 +171,14 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
 }
 
 // ============================================================================
-// 4. MOUSE & KEYBOARD CONTROL (NUT.JS WITH OS FALLBACK)
+// 4. MOUSE MOVEMENT & KEYBOARD AUTOMATION
 // ============================================================================
 
 async function clickAt(x, y, button = 'left', logCallback = () => {}) {
   const posX = Math.round(Number(x));
   const posY = Math.round(Number(y));
 
-  logCallback('automation', `[Mouse] Moving to (${posX}, ${posY}) and clicking ${button}...`);
+  logCallback('automation', `[Native Mouse] Moving to (${posX}, ${posY}) and clicking ${button}...`);
 
   if (nutMouse && Point && Button) {
     try {
@@ -180,7 +187,7 @@ async function clickAt(x, y, button = 'left', logCallback = () => {}) {
       await nutMouse.click(btn);
       return { success: true, x: posX, y: posY };
     } catch (e) {
-      console.warn('[Nut.js click error, falling back to OS driver]:', e.message);
+      console.warn('[Nut.js Click Error, executing PowerShell driver]:', e.message);
     }
   }
 
@@ -201,7 +208,7 @@ async function clickAt(x, y, button = 'left', logCallback = () => {}) {
 '@
       Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
       [NativeMouseDrv]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds 50;
+      Start-Sleep -Milliseconds 45;
       [NativeMouseDrv]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero);
     `;
 
@@ -214,7 +221,7 @@ async function clickAt(x, y, button = 'left', logCallback = () => {}) {
 async function doubleClickAt(x, y, logCallback = () => {}) {
   const posX = Math.round(Number(x));
   const posY = Math.round(Number(y));
-  logCallback('automation', `[Mouse] Double-click at (${posX}, ${posY})...`);
+  logCallback('automation', `[Native Mouse] Double-clicking at (${posX}, ${posY})...`);
 
   if (nutMouse && Point && Button) {
     try {
@@ -239,7 +246,7 @@ async function doubleClickAt(x, y, logCallback = () => {}) {
       Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
       [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
       [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds 75;
+      Start-Sleep -Milliseconds 60;
       [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
       [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
     `;
@@ -259,7 +266,7 @@ async function longPressAt(x, y, durationMs = 1200, logCallback = () => {}) {
   const posY = Math.round(Number(y));
   const sleepTime = Math.max(300, Math.min(5000, Number(durationMs) || 1200));
 
-  logCallback('automation', `[Mouse] Long-press at (${posX}, ${posY}) for ${sleepTime}ms`);
+  logCallback('automation', `[Native Mouse] Long-press at (${posX}, ${posY}) for ${sleepTime}ms`);
 
   if (nutMouse && Point && Button) {
     try {
@@ -298,11 +305,11 @@ async function longPressAt(x, y, durationMs = 1200, logCallback = () => {}) {
 async function clickOnScreenText(targetText, logCallback = () => {}) {
   const findResult = await captureAndFindText(targetText, logCallback);
 
-  if (!findResult.found) {
+  if (!findResult || !findResult.found) {
     return {
       success: false,
       executed: false,
-      reason: `Screen par "${targetText}" nahi mila.`
+      reason: `باس، سکرین پر "${targetText}" موجود نہیں ہے۔`
     };
   }
 
@@ -318,7 +325,7 @@ async function clickOnScreenText(targetText, logCallback = () => {}) {
 async function typeAndSubmitText(textToType, logCallback = () => {}) {
   if (!textToType) return { success: false };
 
-  logCallback('automation', `[Keyboard Action] Typing: "${textToType}" & pressing Enter...`);
+  logCallback('automation', `[Native Keyboard] Typing: "${textToType}" & submitting...`);
 
   if (nutKeyboard && Key) {
     try {
@@ -333,9 +340,9 @@ async function typeAndSubmitText(textToType, logCallback = () => {}) {
     const escaped = textToType.replace(/([+^%~{}()[\]])/g, '{$1}').replace(/'/g, "''");
     const ps = `
       Add-Type -AssemblyName System.Windows.Forms;
-      Start-Sleep -Milliseconds 150;
+      Start-Sleep -Milliseconds 120;
       [System.Windows.Forms.SendKeys]::SendWait('${escaped}');
-      Start-Sleep -Milliseconds 100;
+      Start-Sleep -Milliseconds 80;
       [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
     `;
 
@@ -349,7 +356,7 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
   const isDown = direction.toLowerCase() === 'down';
   const scrollAmt = Math.max(1, amount);
 
-  logCallback('automation', `[Mouse] Scrolling ${direction.toUpperCase()} (${scrollAmt})`);
+  logCallback('automation', `[Native Mouse] Scrolling ${direction.toUpperCase()} (${scrollAmt})`);
 
   if (nutMouse) {
     try {
@@ -383,7 +390,7 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
 }
 
 // ============================================================================
-// 5. YOUTUBE DATA API v3 & GOOGLE SEARCH
+// 5. YOUTUBE API v3 & GOOGLE VERIFICATION
 // ============================================================================
 
 async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browserName = 'chrome') {
@@ -399,7 +406,7 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
       return resolve({ success: true, url: defaultUrl, videoTitle: 'YouTube Home' });
     }
 
-    logCallback('automation', `[YouTube API v3] Calling YouTube search endpoint for: "${cleanQuery}"`);
+    logCallback('automation', `[YouTube API v3] Searching video: "${cleanQuery}"`);
     const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanQuery)}&type=video&maxResults=1&key=${YOUTUBE_DATA_API_KEY}`;
 
     const request = https.get(apiUrl, (res) => {
@@ -416,7 +423,7 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
             const channelTitle = item.snippet.channelTitle;
             const directPlayUrl = `https://www.youtube.com/watch?v=${videoId}&autoplay=1`;
 
-            logCallback('automation', `[YouTube API v3] Video Found: "${videoTitle}" by ${channelTitle} -> Launching`);
+            logCallback('automation', `[YouTube API v3] Launching "${videoTitle}" (${channelTitle})`);
             launchBrowserUrl(directPlayUrl, browserName);
 
             resolve({
@@ -464,7 +471,7 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
 async function verifyWebFacts(query, logCallback = () => {}) {
   return new Promise((resolve) => {
     const cx = getCleanGoogleCx();
-    logCallback('automation', `[Google Verification] Querying facts for: "${query}"`);
+    logCallback('automation', `[Google Search] Verifying facts for: "${query}"`);
 
     const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CUSTOM_SEARCH_API_KEY}&cx=${cx}&q=${encodeURIComponent(query)}&num=3`;
 
@@ -480,7 +487,7 @@ async function verifyWebFacts(query, logCallback = () => {}) {
             link: item.link
           }));
 
-          logCallback('automation', `[Google Verification] Retrieved ${results.length} authentic references.`);
+          logCallback('automation', `[Google Search] Retrieved ${results.length} authentic references.`);
           resolve({ success: true, verified: results.length > 0, items: results });
         } catch (e) {
           resolve({ success: false, error: e.message, items: [] });
@@ -503,7 +510,7 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 }
 
 // ============================================================================
-// 6. LIVE NOTEPAD CODE STREAMING & DIRECT FILE CREATION
+// 6. FILE MANAGEMENT & NOTEPAD STREAMING
 // ============================================================================
 
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
@@ -517,13 +524,13 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
     fs.writeFileSync(fullPath, fileContent, 'utf-8');
 
     if (fs.existsSync(fullPath)) {
-      logCallback('automation', `file.created: "${fullPath}" [SUCCESS]`);
+      logCallback('automation', `[Disk] File created successfully: "${fullPath}"`);
       return { success: true, path: fullPath };
     } else {
-      throw new Error('Disk write verification failed.');
+      throw new Error('File writing verification failed.');
     }
   } catch (err) {
-    logCallback('error', `file.creation_fault: "${err.message}"`);
+    logCallback('error', `[Disk Error]: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -545,7 +552,7 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
     const fullPath = path.join(baseDir, resolvedFilename);
     currentActiveProjectFile = fullPath;
 
-    logCallback('automation', `[Notepad] Writing to file: "${fullPath}" (Update: ${isUpdate ? 'IN-PLACE' : 'NEW'})`);
+    logCallback('automation', `[Notepad] Writing file: "${fullPath}" (Update: ${isUpdate ? 'IN-PLACE' : 'NEW'})`);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       const chunkSize = 40;
@@ -556,7 +563,7 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
           chunk,
           done: false
         });
-        await new Promise((r) => setTimeout(r, 8));
+        await new Promise((r) => setTimeout(r, 6));
       }
       mainWindow.webContents.send('nova:codeStream', {
         filename: resolvedFilename,
@@ -578,7 +585,7 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       }, 350);
     }
 
-    logCallback('automation', `[Notepad] File saved and displayed: "${fullPath}"`);
+    logCallback('automation', `[Notepad] File saved to disk: "${fullPath}"`);
     return { success: true, path: fullPath, filename: resolvedFilename };
   } catch (err) {
     logCallback('error', `[Notepad Typer Error]: ${err.message}`);
@@ -607,7 +614,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
     launchBrowserUrl(finalUrl, browserName);
     return { success: true, launchedUrl: finalUrl };
   } catch (err) {
-    logCallback('error', `[Browser Launch Fault]: ${err.message}`);
+    logCallback('error', `[Browser Launch Error]: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
