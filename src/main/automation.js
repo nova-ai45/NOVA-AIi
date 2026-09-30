@@ -552,7 +552,7 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 }
 
 // ============================================================================
-// 6. MULTI-STEP APPLICATION LAUNCHING & FILE CREATION
+// 6. REAL DESKTOP APP LAUNCHING & PHYSICAL FILE CREATION
 // ============================================================================
 
 async function launchApp(appName, logCallback = () => {}) {
@@ -599,6 +599,7 @@ async function launchApp(appName, logCallback = () => {}) {
 
 /**
  * Direct file creation on physical disk using Node.js fs.
+ * Verifies with fs.existsSync before reporting success.
  */
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
   try {
@@ -617,24 +618,46 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
     fs.writeFileSync(fullPath, fileContent || '', 'utf-8');
 
     if (fs.existsSync(fullPath)) {
-      logCallback('automation', `[File System] File created successfully: "${fullPath}"`);
-      return { success: true, path: fullPath, fileName };
+      logCallback('automation', `[File System] File verified on disk: "${fullPath}"`);
+      return { success: true, path: fullPath, fileName, verified: true };
     } else {
-      throw new Error('File writing verification failed.');
+      throw new Error('File writing verification failed on physical disk.');
     }
   } catch (err) {
     logCallback('error', `[File System Error]: ${err.message}`);
-    return { success: false, error: err.message };
+    return { success: false, error: err.message, verified: false };
   }
 }
 
 /**
- * Sequential Multi-Step Live Notepad Automation:
- * 1. Launches Notepad.exe natively.
- * 2. Writes code directly to physical disk.
- * 3. Streams code typewriter chunks to UI.
- * 4. Activates and focuses the Notepad window.
+ * Multi-Step Automation:
+ * 1. Writes file to disk with Node.js fs.writeFileSync.
+ * 2. Verifies physical existence.
+ * 3. Launches Notepad directly opening the file.
  */
+async function createFileAndLaunchNotepad(fileName, fileContent, targetDirectory = null, logCallback = () => {}, mainWindow = null) {
+  try {
+    const createRes = await createDesktopFile(fileName, fileContent, targetDirectory, logCallback);
+    if (!createRes.success || !fs.existsSync(createRes.path)) {
+      return { success: false, error: 'File creation failed on disk.' };
+    }
+
+    currentActiveProjectFile = createRes.path;
+
+    // Launch Notepad opening the file directly
+    if (process.platform === 'win32') {
+      exec(`notepad.exe "${createRes.path}"`, (err) => {
+        if (err) logCallback('error', `[Notepad Error]: ${err.message}`);
+      });
+    }
+
+    return { success: true, path: createRes.path, fileName, openedInNotepad: true };
+  } catch (err) {
+    logCallback('error', `[Create & Launch Error]: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
 async function liveNotepadCodeStream(filename, content, targetDirectory = null, isUpdate = false, logCallback = () => {}, mainWindow = null) {
   try {
     const baseDir = targetDirectory ? targetDirectory : getDesktopDir();
@@ -654,7 +677,6 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
 
     logCallback('automation', `[Notepad] Writing file: "${fullPath}" (Update: ${isUpdate ? 'IN-PLACE' : 'NEW'})`);
 
-    // Stream typewriter chunks to frontend console
     if (mainWindow && !mainWindow.isDestroyed()) {
       const chunkSize = 40;
       for (let i = 0; i < content.length; i += chunkSize) {
@@ -673,10 +695,8 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       });
     }
 
-    // Write file directly to disk
     fs.writeFileSync(fullPath, content, 'utf-8');
 
-    // Launch Notepad.exe and bring to front
     if (process.platform === 'win32') {
       exec(`notepad.exe "${fullPath}"`);
       setTimeout(() => {
@@ -782,6 +802,9 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
 
     case 'CREATE_FILE':
     case 'SAVE_FILE':
+      if (payload.openNotepad) {
+        return await createFileAndLaunchNotepad(payload.filename, payload.content, payload.directory, logCallback, mainWindow);
+      }
       return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
 
     case 'CREATE_AND_STREAM_CODE':
@@ -836,6 +859,7 @@ module.exports = {
   verifyWebFacts,
   liveNotepadCodeStream,
   createDesktopFile,
+  createFileAndLaunchNotepad,
   openBrowserTarget,
   executeAction
 };
