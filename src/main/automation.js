@@ -5,7 +5,7 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION LIBRARIES
+// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION DRIVERS
 // ============================================================================
 let screenshot = null;
 try {
@@ -37,7 +37,7 @@ try {
   nutMouse.config.autoDelayMs = 25;
   nutKeyboard.config.autoDelayMs = 15;
 } catch (e) {
-  console.warn('[Local Input] @nut-tree/nut-js not found. Using native Windows fallback.');
+  console.warn('[Local Input] @nut-tree/nut-js not found. Using native Windows User32 fallback.');
 }
 
 // ============================================================================
@@ -58,6 +58,10 @@ function getDesktopDir() {
   return app.getPath('desktop');
 }
 
+function getDocumentsDir() {
+  return app.getPath('documents');
+}
+
 let currentActiveProjectFile = null;
 
 // ============================================================================
@@ -66,7 +70,7 @@ let currentActiveProjectFile = null;
 
 /**
  * Captures primary display and performs local OCR text extraction.
- * Guarantees zero hallucinations by returning verbatim detected text.
+ * Returns clean plain text for AI context.
  */
 async function readEntireScreenOCR(logCallback = () => {}) {
   if (!screenshot) {
@@ -309,7 +313,7 @@ async function clickOnScreenText(targetText, logCallback = () => {}) {
     return {
       success: false,
       executed: false,
-      reason: `باس، سکرین پر "${targetText}" موجود نہیں ہے۔`
+      reason: `باس، سکرین پر "${targetText}" نظر نہیں آیا۔`
     };
   }
 
@@ -421,7 +425,7 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
             const videoId = item.id.videoId;
             const videoTitle = item.snippet.title;
             const channelTitle = item.snippet.channelTitle;
-            const directPlayUrl = `https://www.youtube.com/watch?v=${videoId}&autoplay=1`;
+            const directPlayUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
             logCallback('automation', `[YouTube API v3] Launching "${videoTitle}" (${channelTitle})`);
             launchBrowserUrl(directPlayUrl, browserName);
@@ -468,6 +472,41 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
   });
 }
 
+/**
+ * YouTube Channel / Video Analytics & Verification API Call
+ */
+async function verifyYouTubeVideoOrChannel(query, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const cleanQuery = (query || '').trim();
+    logCallback('automation', `[YouTube Verification] Fetching video/channel statistics for: "${cleanQuery}"`);
+
+    const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanQuery)}&maxResults=3&key=${YOUTUBE_DATA_API_KEY}`;
+
+    https.get(apiUrl, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          const results = (json.items || []).map((item) => ({
+            id: item.id.videoId || item.id.channelId,
+            title: item.snippet.title,
+            description: item.snippet.description,
+            channelTitle: item.snippet.channelTitle,
+            publishedAt: item.snippet.publishedAt
+          }));
+          logCallback('automation', `[YouTube Verification] Retrieved ${results.length} metadata records.`);
+          resolve({ success: true, verified: results.length > 0, items: results });
+        } catch (e) {
+          resolve({ success: false, error: e.message, items: [] });
+        }
+      });
+    }).on('error', (err) => {
+      resolve({ success: false, error: err.message, items: [] });
+    });
+  });
+}
+
 async function verifyWebFacts(query, logCallback = () => {}) {
   return new Promise((resolve) => {
     const cx = getCleanGoogleCx();
@@ -510,27 +549,36 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 }
 
 // ============================================================================
-// 6. FILE MANAGEMENT & NOTEPAD STREAMING
+// 6. FILE SYSTEM HANDLER & NOTEPAD STREAMING
 // ============================================================================
 
+/**
+ * Direct file creation on disk (supports .txt, .json, .js, .html, .py, etc.)
+ */
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
   try {
-    const baseDir = targetDirectory ? targetDirectory : getDesktopDir();
+    let baseDir = targetDirectory;
+    if (!baseDir) {
+      baseDir = getDesktopDir();
+    } else if (baseDir === 'documents') {
+      baseDir = getDocumentsDir();
+    }
+
     if (!fs.existsSync(baseDir)) {
       fs.mkdirSync(baseDir, { recursive: true });
     }
 
     const fullPath = path.join(baseDir, fileName);
-    fs.writeFileSync(fullPath, fileContent, 'utf-8');
+    fs.writeFileSync(fullPath, fileContent || '', 'utf-8');
 
     if (fs.existsSync(fullPath)) {
-      logCallback('automation', `[Disk] File created successfully: "${fullPath}"`);
-      return { success: true, path: fullPath };
+      logCallback('automation', `[File System] File created successfully: "${fullPath}"`);
+      return { success: true, path: fullPath, fileName };
     } else {
       throw new Error('File writing verification failed.');
     }
   } catch (err) {
-    logCallback('error', `[Disk Error]: ${err.message}`);
+    logCallback('error', `[File System Error]: ${err.message}`);
     return { success: false, error: err.message };
   }
 }
@@ -665,11 +713,16 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
         payload.browser || 'chrome'
       );
 
+    case 'VERIFY_MEDIA':
+    case 'YOUTUBE_VERIFY':
+      return await verifyYouTubeVideoOrChannel(payload.query || payload.title, logCallback);
+
     case 'GOOGLE_CUSTOM_SEARCH':
     case 'VERIFY_WEB':
       return await verifyWebFacts(payload.query, logCallback);
 
     case 'CREATE_FILE':
+    case 'SAVE_FILE':
       return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
 
     case 'CREATE_AND_STREAM_CODE':
@@ -727,6 +780,7 @@ module.exports = {
   longPressAt,
   scrollScreen,
   searchAndPlayYouTubeDirect,
+  verifyYouTubeVideoOrChannel,
   verifyWebFacts,
   liveNotepadCodeStream,
   createDesktopFile,
