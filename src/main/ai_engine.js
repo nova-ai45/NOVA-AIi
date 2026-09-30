@@ -92,7 +92,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
     for (const turn of rawHistory) {
       if (!turn) continue;
       const text = (turn.text || turn.content || '').trim();
-      if (!text || text.includes('[Voice Directive]')) continue;
+      if (!text || text.includes('[Voice Directive]') || text.includes('آپ کیا پوچھنا چاہتے ہیں')) continue;
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
 
@@ -142,21 +142,25 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   return sanitized;
 }
 
-async function runAIInferenceStream(
-  userPrompt,
-  audioBase64,
+/**
+ * Robust AI Inference Runner with Object Parameters to Prevent Argument Swaps
+ */
+async function runAIInferenceStream({
+  userPrompt = '',
+  audioBase64 = null,
   audioMimeType = 'audio/webm',
-  manualImageBase64,
+  manualImageBase64 = null,
   config = {},
   conversationHistory = [],
   hardwareStats = null,
   onChunkCallback = () => {},
   logCallback = () => {},
   mainWindow = null
-) {
+}) {
   let imageBase64 = manualImageBase64;
   const promptText = (userPrompt || '').trim();
 
+  // Screen query intent detection
   const isScreenQuery = /\b(screen|display|desktop|سکرین|دیکھو|کیا کھلا ہے|کیا ہے|پڑھو|dekho|kya hai|kya likha)\b/i.test(promptText);
 
   let ocrScreenText = '';
@@ -195,8 +199,9 @@ async function runAIInferenceStream(
   const provider = config.provider || 'gemini';
 
   const currentParts = [];
+
+  // Pass audio if present
   if (audioBase64) {
-    // بالکل درست MIME Type پاس کریں تاکہ جیمنائی آواز کو 100% قبول کرے
     currentParts.push({
       inlineData: { mimeType: audioMimeType || 'audio/webm', data: audioBase64 }
     });
@@ -217,10 +222,14 @@ async function runAIInferenceStream(
 
   let parsedResponse = null;
 
+  // 1. Google Gemini Flash
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
-      throw new Error("Gemini API Key missing! Kripya Settings me jaa kar apni Gemini API Key enter karein.");
+      return {
+        spokenResponse: "باس، سیٹنگز میں جیمنائی کی اے پی آئی کی (API Key) موجود نہیں ہے۔ برائے مہربانی سیٹنگز کھول کر اپنی کی درج کریں۔",
+        actions: []
+      };
     }
 
     const genAI = new GoogleGenerativeAI(userGeminiKey);
@@ -247,7 +256,14 @@ async function runAIInferenceStream(
           onChunkCallback(chunkText);
         }
 
-        return JSON.parse(fullText);
+        let cleanJson = fullText.trim();
+        cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+        const firstBrace = cleanJson.indexOf('{');
+        const lastBrace = cleanJson.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace !== -1) {
+          cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+        }
+        return JSON.parse(cleanJson);
       }, 3, 1000);
     } catch (err) {
       if (config.openrouterKey) {
@@ -260,6 +276,7 @@ async function runAIInferenceStream(
     parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
   }
 
+  // Execute OS actions
   if (parsedResponse && parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
@@ -350,7 +367,14 @@ async function queryOpenRouterDirect(userPrompt, imageBase64, screenContextPromp
       onChunkCallback(text);
     }
 
-    return JSON.parse(fullText);
+    let cleanJson = fullText.trim();
+    cleanJson = cleanJson.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const firstBrace = cleanJson.indexOf('{');
+    const lastBrace = cleanJson.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
+    }
+    return JSON.parse(cleanJson);
   }, 3, 1000);
 }
 
