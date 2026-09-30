@@ -385,7 +385,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master AI Command Execution Pipeline (Fixed Object Passing)
+  // Master AI Command Execution Pipeline (With Guaranteed Speech Output)
   ipcMain.handle('nova:processCommand', async (_, payload) => {
     const settings = readSettings();
 
@@ -424,7 +424,7 @@ app.whenReady().then(() => {
         throw new Error('AI Engine subsystem is unavailable.');
       }
 
-      // Safe Object Parameter Passing: eliminates positional argument swaps
+      // Safe Object Parameter Passing
       const aiResponse = await Promise.race([
         aiEngine.runAIInferenceStream({
           userPrompt: text,
@@ -453,10 +453,11 @@ app.whenReady().then(() => {
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
+      // ALWAYS Synthesize Neural Voice (hi-IN-SwaraNeural)
       let audioResult = null;
       const responseToSpeak = (aiResponse?.spokenResponse || '').trim();
 
-      if (settings.autoSpeak && responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
+      if (responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
         try {
           audioResult = await ttsEngine.synthesizeNeuralSpeech(
             responseToSpeak,
