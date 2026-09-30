@@ -310,7 +310,7 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // 1. Keep-Alive / Heartbeat IPC to prevent WebSocket & Channel Drops
+  // 1. Keep-Alive / Heartbeat IPC
   ipcMain.handle('nova:ping', () => {
     return { status: 'alive', timestamp: Date.now() };
   });
@@ -391,16 +391,15 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // 7. Master AI Command Execution Pipeline (With Watchdog to eliminate infinite "Thinking..." state)
-  ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
+  // 7. Master AI Command Execution Pipeline (Shows "Analyzing...", matches MIME type)
+  ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, mimeType, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
     }
 
-    // Switch UI state immediately to processing
-    broadcastState('processing');
+    broadcastState('thinking');
 
     try {
       let visionData = null;
@@ -415,18 +414,22 @@ app.whenReady().then(() => {
         ? conversationHistory
         : globalMemoryContext;
 
-      if (text) broadcastLog('command', `User Directive: "${text}"`);
-      else if (audioBase64) broadcastLog('command', `Audio stream received -> Analyzing with Gemini...`);
+      if (text) {
+        broadcastLog('command', `User Directive: "${text}"`);
+      } else if (audioBase64) {
+        // یوزر کی ہدایت کے مطابق صرف "Analyzing..." دکھائیں
+        broadcastLog('command', 'Analyzing...');
+      }
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem is unavailable.');
       }
 
-      // Execute AI Stream with safety watchdog timeout (65 seconds)
       const aiResponse = await Promise.race([
         aiEngine.runAIInferenceStream(
           text,
           audioBase64,
+          mimeType || 'audio/webm', // درست فارمیٹ جیمنائی کو پاس کریں
           visionData,
           settings,
           historyContext,
@@ -440,18 +443,16 @@ app.whenReady().then(() => {
           mainWindow
         ),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('AI Engine inference timeout after 65 seconds')), 65000)
+          setTimeout(() => reject(new Error('Inference timeout after 65 seconds')), 65000)
         )
       ]);
 
-      // Save valid interactions into persistent memory.json
       if (aiResponse.spokenResponse) {
         globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
         globalMemoryContext.push({ role: 'model', text: aiResponse.spokenResponse });
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
-      // Generate instant TTS neural voice audio
       let audioResult = null;
       const responseToSpeak = (aiResponse.spokenResponse || '').trim();
 
