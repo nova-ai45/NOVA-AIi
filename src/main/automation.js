@@ -5,7 +5,7 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION DRIVERS
+// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION LIBRARIES
 // ============================================================================
 let screenshot = null;
 try {
@@ -68,10 +68,6 @@ let currentActiveProjectFile = null;
 // 3. ACCURATE LOCAL OCR & SCREEN TEXT EXTRACTION
 // ============================================================================
 
-/**
- * Captures primary display and performs local OCR text extraction.
- * Returns clean plain text for AI context.
- */
 async function readEntireScreenOCR(logCallback = () => {}) {
   if (!screenshot) {
     logCallback('error', '[Local OCR] screenshot-desktop module is missing.');
@@ -102,9 +98,6 @@ async function readEntireScreenOCR(logCallback = () => {}) {
   }
 }
 
-/**
- * Searches local display for exact or fuzzy word positions.
- */
 async function captureAndFindText(targetText, logCallback = () => {}) {
   const target = (targetText || '').trim().toLowerCase();
   if (!target) {
@@ -472,13 +465,10 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
   });
 }
 
-/**
- * YouTube Channel / Video Analytics & Verification API Call
- */
 async function verifyYouTubeVideoOrChannel(query, logCallback = () => {}) {
   return new Promise((resolve) => {
     const cleanQuery = (query || '').trim();
-    logCallback('automation', `[YouTube Verification] Fetching video/channel statistics for: "${cleanQuery}"`);
+    logCallback('automation', `[YouTube Verification] Fetching metadata for: "${cleanQuery}"`);
 
     const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanQuery)}&maxResults=3&key=${YOUTUBE_DATA_API_KEY}`;
 
@@ -552,9 +542,6 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 // 6. FILE SYSTEM HANDLER & NOTEPAD STREAMING
 // ============================================================================
 
-/**
- * Direct file creation on disk (supports .txt, .json, .js, .html, .py, etc.)
- */
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
   try {
     let baseDir = targetDirectory;
