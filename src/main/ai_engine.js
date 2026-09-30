@@ -15,6 +15,41 @@ const CANNED_LOOP_PATTERNS = [
 ];
 
 /**
+ * Robust Retry Mechanism with Exponential Backoff for Network Drops & WebSocket Reconnections
+ */
+async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      const isNetworkDrop =
+        err.message?.includes('fetch failed') ||
+        err.message?.includes('Connecting') ||
+        err.message?.includes('Connection') ||
+        err.message?.includes('ECONNRESET') ||
+        err.message?.includes('ETIMEDOUT') ||
+        err.message?.includes('ENOTFOUND') ||
+        err.message?.includes('socket') ||
+        err.message?.includes('WebSocket') ||
+        err.message?.includes('503') ||
+        err.message?.includes('500') ||
+        err.message?.includes('429') ||
+        err.message?.includes('ResourceExhausted');
+
+      if (!isNetworkDrop || attempt >= maxRetries) {
+        throw err;
+      }
+
+      const backoffDelay = initialDelayMs * Math.pow(2, attempt - 1);
+      console.warn(`[AI Engine] Connection glitch detected (${err.message}). Auto-reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
+      await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+    }
+  }
+}
+
+/**
  * Persona: Boss Assistant Mode.
  * Language: Natural Urdu script for accurate neural text-to-speech pronunciation.
  */
@@ -37,7 +72,7 @@ ${personalityCore}
 =======================================================
 1. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
    - اگر سکرین پر کوئی تحریر یا ونڈو موجود ہے تو بتائیں: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
-   - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
+   - اگر سکرین پر کوئی واضح ٹیکسٹ نہ ہو، تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
    - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
 2. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
    - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو آئی ڈی نکال کر چلا دے گا۔
@@ -102,7 +137,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   }
 
   const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
-    ? [...currentParts]
+    ? currentParts
     : [{ text: 'User request received.' }];
 
   sanitized.push({
@@ -118,7 +153,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Grounded Execution Stream: Physical actions are executed before generating final speech.
+ * Grounded Execution Stream with Network Drop Auto-Recovery
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -194,7 +229,7 @@ async function runAIInferenceStream(
 
   let parsedResponse = null;
 
-  // 1. Google Gemini 2.0 Flash
+  // 1. Google Gemini Flash Engine with Auto-Retry
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -211,29 +246,26 @@ async function runAIInferenceStream(
         systemInstruction: activeSystemInstruction,
         generationConfig: { responseMimeType: 'application/json' }
       },
-      { timeout: 120000 }
+      { timeout: 90000 }
     );
 
     try {
-      const responseStream = await model.generateContentStream({ contents: sanitizedContents });
-      let fullText = '';
+      parsedResponse = await retryWithBackoff(async () => {
+        const responseStream = await model.generateContentStream({ contents: sanitizedContents });
+        let fullText = '';
 
-      for await (const chunk of responseStream.stream) {
-        const chunkText = chunk.text();
-        fullText += chunkText;
-        onChunkCallback(chunkText);
-      }
+        for await (const chunk of responseStream.stream) {
+          const chunkText = chunk.text();
+          fullText += chunkText;
+          onChunkCallback(chunkText);
+        }
 
-      parsedResponse = JSON.parse(fullText);
+        return JSON.parse(fullText);
+      }, 3, 1000);
     } catch (err) {
-      const isQuotaOrTimeout =
-        err.message.includes('429') ||
-        err.message.includes('quota') ||
-        err.message.includes('ResourceExhausted') ||
-        err.message.includes('503') ||
-        err.message.includes('fetch failed');
+      console.warn(`[AI Engine] Gemini stream failed after retries: ${err.message}. Checking failover...`);
 
-      if (isQuotaOrTimeout && config.openrouterKey) {
+      if (config.openrouterKey) {
         parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
       } else {
         throw err;
@@ -243,10 +275,8 @@ async function runAIInferenceStream(
     parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
   }
 
-  // =========================================================================
-  // PRE-EXECUTION GROUNDING: Perform physical actions before responding
-  // =========================================================================
-  if (parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
+  // Pre-execution Ground Truth: Execute physical actions before sending final response
+  if (parsedResponse && parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
 
@@ -286,7 +316,6 @@ async function runAIInferenceStream(
     }
   }
 
-  // Handle empty screen context response
   if (isScreenQuery && (!ocrScreenText || ocrScreenText.trim().length === 0)) {
     parsedResponse.spokenResponse = "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔";
   }
@@ -298,7 +327,7 @@ async function queryOpenRouterDirect(userPrompt, imageBase64, screenContextPromp
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: config.openrouterKey,
-    timeout: 120000,
+    timeout: 90000,
     defaultHeaders: { 'HTTP-Referer': 'https://nova-ai.desktop', 'X-Title': 'NOVA AI' }
   });
 
@@ -322,21 +351,23 @@ async function queryOpenRouterDirect(userPrompt, imageBase64, screenContextPromp
     content: userContent
   });
 
-  const stream = await client.chat.completions.create({
-    model: config.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free',
-    messages,
-    response_format: { type: 'json_object' },
-    stream: true
-  });
+  return await retryWithBackoff(async () => {
+    const stream = await client.chat.completions.create({
+      model: config.openrouterModel || 'meta-llama/llama-3.3-70b-instruct:free',
+      messages,
+      response_format: { type: 'json_object' },
+      stream: true
+    });
 
-  let fullText = '';
-  for await (const chunk of stream) {
-    const text = chunk.choices[0]?.delta?.content || '';
-    fullText += text;
-    onChunkCallback(text);
-  }
+    let fullText = '';
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || '';
+      fullText += text;
+      onChunkCallback(text);
+    }
 
-  return JSON.parse(fullText);
+    return JSON.parse(fullText);
+  }, 3, 1000);
 }
 
 module.exports = {
