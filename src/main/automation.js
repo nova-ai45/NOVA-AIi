@@ -5,7 +5,7 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 1. LOCAL SCREEN OCR & VISION MODULES
+// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION LIBRARIES
 // ============================================================================
 let screenshot = null;
 try {
@@ -19,6 +19,25 @@ try {
   Tesseract = require('tesseract.js');
 } catch (e) {
   console.warn('[Local OCR] tesseract.js not available:', e.message);
+}
+
+let nutMouse = null;
+let nutKeyboard = null;
+let Point = null;
+let Button = null;
+let Key = null;
+
+try {
+  const nut = require('@nut-tree/nut-js');
+  nutMouse = nut.mouse;
+  nutKeyboard = nut.keyboard;
+  Point = nut.Point;
+  Button = nut.Button;
+  Key = nut.Key;
+  nutMouse.config.autoDelayMs = 30;
+  nutKeyboard.config.autoDelayMs = 20;
+} catch (e) {
+  console.warn('[Local Input] @nut-tree/nut-js not loaded, using native OS fallback.');
 }
 
 // ============================================================================
@@ -42,12 +61,39 @@ function getDesktopDir() {
 let currentActiveProjectFile = null;
 
 // ============================================================================
-// 3. REAL LOCAL SCREEN OCR & COORDINATE FINDING
+// 3. FULL DISPLAY OCR TEXT EXTRACTION
 // ============================================================================
 
 /**
+ * Captures primary display and extracts visible text via Tesseract OCR locally.
+ */
+async function readEntireScreenOCR(logCallback = () => {}) {
+  if (!screenshot) {
+    logCallback('error', '[Local OCR] screenshot-desktop module is missing.');
+    return '';
+  }
+  if (!Tesseract) {
+    logCallback('error', '[Local OCR] tesseract.js module is missing.');
+    return '';
+  }
+
+  try {
+    logCallback('automation', '[Local OCR] Capturing display & extracting on-screen text...');
+
+    const imgBuffer = await screenshot({ format: 'png' });
+    const { data } = await Tesseract.recognize(imgBuffer, 'eng');
+    const rawText = (data && data.text ? data.text : '').replace(/\s+/g, ' ').trim();
+
+    logCallback('automation', `[Local OCR] Extracted ${rawText.length} characters of visible screen text.`);
+    return rawText.slice(0, 2500);
+  } catch (err) {
+    logCallback('error', `[Local OCR Read Error]: ${err.message}`);
+    return '';
+  }
+}
+
+/**
  * Scans active screen locally to find coordinates of target text.
- * Returns { found: boolean, x: number, y: number, text: string }
  */
 async function captureAndFindText(targetText, logCallback = () => {}) {
   const target = (targetText || '').trim().toLowerCase();
@@ -69,7 +115,6 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
     const words = data.words || [];
     const targetWords = target.split(/\s+/);
 
-    // Multi-word phrase search
     if (targetWords.length > 1) {
       for (let i = 0; i <= words.length - targetWords.length; i++) {
         let match = true;
@@ -98,7 +143,6 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       }
     }
 
-    // Single-word search
     for (const w of words) {
       const cleanWord = w.text.toLowerCase().replace(/[^\w]/g, '');
       const cleanTarget = target.replace(/[^\w]/g, '');
@@ -119,17 +163,30 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
   }
 }
 
-/**
- * Physical Windows Mouse Click at Coordinates via User32
- */
+// ============================================================================
+// 4. MOUSE & KEYBOARD CONTROL (NUT.JS WITH OS FALLBACK)
+// ============================================================================
+
 async function clickAt(x, y, button = 'left', logCallback = () => {}) {
+  const posX = Math.round(Number(x));
+  const posY = Math.round(Number(y));
+
+  logCallback('automation', `[Mouse] Moving to (${posX}, ${posY}) and clicking ${button}...`);
+
+  if (nutMouse && Point && Button) {
+    try {
+      await nutMouse.setPosition(new Point(posX, posY));
+      const btn = button === 'right' ? Button.RIGHT : Button.LEFT;
+      await nutMouse.click(btn);
+      return { success: true, x: posX, y: posY };
+    } catch (e) {
+      console.warn('[Nut.js click error, falling back to OS driver]:', e.message);
+    }
+  }
+
   return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
     const downFlag = button === 'right' ? '0x0008' : '0x0002';
     const upFlag = button === 'right' ? '0x0010' : '0x0004';
-
-    logCallback('automation', `[Native Mouse] Moving to (${posX}, ${posY}) and clicking...`);
 
     const ps = `
       Add-Type -AssemblyName System.Windows.Forms;
@@ -154,10 +211,90 @@ async function clickAt(x, y, button = 'left', logCallback = () => {}) {
   });
 }
 
-/**
- * Searches the screen for text and performs an authentic physical left click.
- * Strictly verifies whether the word was present.
- */
+async function doubleClickAt(x, y, logCallback = () => {}) {
+  const posX = Math.round(Number(x));
+  const posY = Math.round(Number(y));
+  logCallback('automation', `[Mouse] Double-click at (${posX}, ${posY})...`);
+
+  if (nutMouse && Point && Button) {
+    try {
+      await nutMouse.setPosition(new Point(posX, posY));
+      await nutMouse.doubleClick(Button.LEFT);
+      return { success: true, x: posX, y: posY };
+    } catch (_) {}
+  }
+
+  return new Promise((resolve) => {
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseDblDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds 75;
+      [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY });
+    });
+  });
+}
+
+async function rightClickAt(x, y, logCallback = () => {}) {
+  return await clickAt(x, y, 'right', logCallback);
+}
+
+async function longPressAt(x, y, durationMs = 1200, logCallback = () => {}) {
+  const posX = Math.round(Number(x));
+  const posY = Math.round(Number(y));
+  const sleepTime = Math.max(300, Math.min(5000, Number(durationMs) || 1200));
+
+  logCallback('automation', `[Mouse] Long-press at (${posX}, ${posY}) for ${sleepTime}ms`);
+
+  if (nutMouse && Point && Button) {
+    try {
+      await nutMouse.setPosition(new Point(posX, posY));
+      await nutMouse.pressButton(Button.LEFT);
+      await new Promise((r) => setTimeout(r, sleepTime));
+      await nutMouse.releaseButton(Button.LEFT);
+      return { success: true, x: posX, y: posY, durationMs: sleepTime };
+    } catch (_) {}
+  }
+
+  return new Promise((resolve) => {
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseLongDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseLongDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds ${sleepTime};
+      [NativeMouseLongDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY, durationMs: sleepTime });
+    });
+  });
+}
+
 async function clickOnScreenText(targetText, logCallback = () => {}) {
   const findResult = await captureAndFindText(targetText, logCallback);
 
@@ -178,15 +315,53 @@ async function clickOnScreenText(targetText, logCallback = () => {}) {
   };
 }
 
-/**
- * Scroll screen natively
- */
-async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
-  return new Promise((resolve) => {
-    const isDown = direction.toLowerCase() === 'down';
-    const scrollDelta = isDown ? -120 * Math.max(1, amount) : 120 * Math.max(1, amount);
+async function typeAndSubmitText(textToType, logCallback = () => {}) {
+  if (!textToType) return { success: false };
 
-    logCallback('automation', `[Native Mouse] Scrolling ${direction.toUpperCase()} by ${amount}`);
+  logCallback('automation', `[Keyboard Action] Typing: "${textToType}" & pressing Enter...`);
+
+  if (nutKeyboard && Key) {
+    try {
+      await nutKeyboard.type(textToType);
+      await nutKeyboard.pressKey(Key.Enter);
+      await nutKeyboard.releaseKey(Key.Enter);
+      return { success: true };
+    } catch (_) {}
+  }
+
+  return new Promise((resolve) => {
+    const escaped = textToType.replace(/([+^%~{}()[\]])/g, '{$1}').replace(/'/g, "''");
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      Start-Sleep -Milliseconds 150;
+      [System.Windows.Forms.SendKeys]::SendWait('${escaped}');
+      Start-Sleep -Milliseconds 100;
+      [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
+    `;
+
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err });
+    });
+  });
+}
+
+async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
+  const isDown = direction.toLowerCase() === 'down';
+  const scrollAmt = Math.max(1, amount);
+
+  logCallback('automation', `[Mouse] Scrolling ${direction.toUpperCase()} (${scrollAmt})`);
+
+  if (nutMouse) {
+    try {
+      const px = scrollAmt * 120;
+      if (isDown) await nutMouse.scrollDown(px);
+      else await nutMouse.scrollUp(px);
+      return { success: true, direction, amount: scrollAmt };
+    } catch (_) {}
+  }
+
+  return new Promise((resolve) => {
+    const scrollDelta = isDown ? -120 * scrollAmt : 120 * scrollAmt;
 
     const ps = `
       $code = @'
@@ -202,19 +377,15 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
     `;
 
     exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, direction, amount });
+      resolve({ success: !err, direction, amount: scrollAmt });
     });
   });
 }
 
 // ============================================================================
-// 4. REAL YOUTUBE DATA API v3 EXECUTION & WEB VERIFICATION
+// 5. YOUTUBE DATA API v3 & GOOGLE SEARCH
 // ============================================================================
 
-/**
- * Searches YouTube API v3 and plays the actual video in Chrome.
- * Returns factual data (video title, channel title, video ID).
- */
 async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browserName = 'chrome') {
   return new Promise((resolve) => {
     const cleanQuery = (query || '')
@@ -290,9 +461,6 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
   });
 }
 
-/**
- * Real Web & Fact Verification via Google Custom Search API
- */
 async function verifyWebFacts(query, logCallback = () => {}) {
   return new Promise((resolve) => {
     const cx = getCleanGoogleCx();
@@ -335,8 +503,30 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 }
 
 // ============================================================================
-// 5. LIVE NOTEPAD CODE STREAMING & IN-PLACE FILE REVISION
+// 6. LIVE NOTEPAD CODE STREAMING & DIRECT FILE CREATION
 // ============================================================================
+
+async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
+  try {
+    const baseDir = targetDirectory ? targetDirectory : getDesktopDir();
+    if (!fs.existsSync(baseDir)) {
+      fs.mkdirSync(baseDir, { recursive: true });
+    }
+
+    const fullPath = path.join(baseDir, fileName);
+    fs.writeFileSync(fullPath, fileContent, 'utf-8');
+
+    if (fs.existsSync(fullPath)) {
+      logCallback('automation', `file.created: "${fullPath}" [SUCCESS]`);
+      return { success: true, path: fullPath };
+    } else {
+      throw new Error('Disk write verification failed.');
+    }
+  } catch (err) {
+    logCallback('error', `file.creation_fault: "${err.message}"`);
+    return { success: false, error: err.message };
+  }
+}
 
 async function liveNotepadCodeStream(filename, content, targetDirectory = null, isUpdate = false, logCallback = () => {}, mainWindow = null) {
   try {
@@ -357,7 +547,6 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
 
     logCallback('automation', `[Notepad] Writing to file: "${fullPath}" (Update: ${isUpdate ? 'IN-PLACE' : 'NEW'})`);
 
-    // Stream typewriter chunks to UI
     if (mainWindow && !mainWindow.isDestroyed()) {
       const chunkSize = 40;
       for (let i = 0; i < content.length; i += chunkSize) {
@@ -376,10 +565,8 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       });
     }
 
-    // Save in-place to physical disk
     fs.writeFileSync(fullPath, content, 'utf-8');
 
-    // Launch Notepad visibly
     if (process.platform === 'win32') {
       exec(`notepad.exe "${fullPath}"`);
       setTimeout(() => {
@@ -399,9 +586,36 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
   }
 }
 
-/**
- * Master Action Dispatcher
- */
+async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
+  try {
+    let finalUrl = url || 'https://www.google.com';
+    const isChannelOrDirect = finalUrl.includes('@') || finalUrl.includes('/watch');
+
+    if (!isChannelOrDirect && finalUrl.includes('youtube.com') && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
+      return await searchAndPlayYouTubeDirect(searchQuery.trim(), logCallback, browserName);
+    }
+
+    if (!isChannelOrDirect && searchQuery && typeof searchQuery === 'string' && searchQuery.trim() !== '') {
+      finalUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery.trim())}`;
+    }
+
+    if (!/^https?:\/\//i.test(finalUrl)) {
+      finalUrl = 'https://' + finalUrl;
+    }
+
+    logCallback('automation', `[Browser Launcher] Launching: "${finalUrl}"`);
+    launchBrowserUrl(finalUrl, browserName);
+    return { success: true, launchedUrl: finalUrl };
+  } catch (err) {
+    logCallback('error', `[Browser Launch Fault]: ${err.message}`);
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================================================
+// 7. MASTER ACTION DISPATCHER
+// ============================================================================
+
 async function executeAction(actionObj, logCallback = () => {}, mainWindow = null) {
   const { type, payload = {} } = actionObj;
   logCallback('system', `Dispatching Action: [${type}]`);
@@ -409,11 +623,29 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
   switch (type) {
     case 'CLICK_SCREEN_TEXT':
     case 'CLICK_TEXT':
+    case 'CLICK_ON_TEXT':
       return await clickOnScreenText(payload.text || payload.targetText || payload.label, logCallback);
+
+    case 'FIND_TEXT':
+    case 'FIND_SCREEN_TEXT':
+      return await captureAndFindText(payload.text || payload.targetText || payload.label, logCallback);
+
+    case 'TYPE_AND_SUBMIT':
+    case 'TYPE_TEXT':
+      return await typeAndSubmitText(payload.text || payload.textToType, logCallback);
 
     case 'CLICK_AT':
     case 'CLICK_SCREEN':
       return await clickAt(payload.x, payload.y, payload.button || 'left', logCallback);
+
+    case 'DOUBLE_CLICK_AT':
+      return await doubleClickAt(payload.x, payload.y, logCallback);
+
+    case 'RIGHT_CLICK_AT':
+      return await rightClickAt(payload.x, payload.y, logCallback);
+
+    case 'LONG_PRESS_AT':
+      return await longPressAt(payload.x, payload.y, payload.durationMs || 1200, logCallback);
 
     case 'SCROLL_SCREEN':
       return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
@@ -431,6 +663,8 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
       return await verifyWebFacts(payload.query, logCallback);
 
     case 'CREATE_FILE':
+      return await createDesktopFile(payload.filename, payload.content, payload.directory, logCallback);
+
     case 'CREATE_AND_STREAM_CODE':
     case 'UPDATE_FILE_IN_PLACE':
       return await liveNotepadCodeStream(
@@ -443,14 +677,26 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
       );
 
     case 'OPEN_BROWSER':
-      launchBrowserUrl(payload.url || 'https://www.google.com', payload.browser || 'chrome');
-      return { success: true, url: payload.url };
+      return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
 
     case 'OPEN_APP':
       return new Promise((resolve) => {
         exec(`start ${payload.name}`, (err) => {
           logCallback('automation', `[App Launcher] Started: "${payload.name}"`);
           resolve({ success: !err });
+        });
+      });
+
+    case 'RUN_COMMAND':
+      return new Promise((resolve) => {
+        exec(payload.cmd, (err, stdout, stderr) => {
+          if (err) {
+            logCallback('error', `[Shell Error]: ${stderr || err.message}`);
+            resolve({ success: false, error: stderr || err.message });
+          } else {
+            logCallback('automation', `[Shell Output]: ${stdout.trim()}`);
+            resolve({ success: true, output: stdout });
+          }
         });
       });
 
@@ -464,12 +710,19 @@ module.exports = {
   YOUTUBE_DATA_API_KEY,
   GOOGLE_CUSTOM_SEARCH_API_KEY,
   GOOGLE_SEARCH_ENGINE_CX,
+  readEntireScreenOCR,
   captureAndFindText,
   clickOnScreenText,
+  typeAndSubmitText,
   clickAt,
+  doubleClickAt,
+  rightClickAt,
+  longPressAt,
   scrollScreen,
   searchAndPlayYouTubeDirect,
   verifyWebFacts,
   liveNotepadCodeStream,
+  createDesktopFile,
+  openBrowserTarget,
   executeAction
 };
