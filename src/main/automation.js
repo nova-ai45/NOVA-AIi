@@ -65,58 +65,13 @@ function getDocumentsDir() {
 let currentActiveProjectFile = null;
 
 // ============================================================================
-// 3. REAL DESKTOP APP LAUNCHING ENGINE
+// 3. ACCURATE LOCAL OCR & SCREEN TEXT EXTRACTION
 // ============================================================================
 
 /**
- * Natively executes and opens Windows applications (Notepad, Calc, Chrome, etc.)
+ * Captures primary display and performs local OCR text extraction.
+ * Guarantees zero hallucinations by returning authentic detected text.
  */
-async function launchApp(appName, logCallback = () => {}) {
-  return new Promise((resolve) => {
-    const raw = (appName || '').trim().toLowerCase();
-    logCallback('automation', `[App Launcher] Request to open application: "${raw}"`);
-
-    let binary = '';
-    if (raw.includes('notepad') || raw.includes('نوٹ پیڈ')) {
-      binary = 'notepad.exe';
-    } else if (raw.includes('calc') || raw.includes('calculator') || raw.includes('کیلکولیٹر')) {
-      binary = 'calc.exe';
-    } else if (raw.includes('chrome') || raw.includes('کروم')) {
-      binary = 'start chrome';
-    } else if (raw.includes('edge')) {
-      binary = 'start msedge';
-    } else if (raw.includes('explorer') || raw.includes('files') || raw.includes('folder')) {
-      binary = 'explorer.exe';
-    } else if (raw.includes('cmd') || raw.includes('terminal') || raw.includes('command')) {
-      binary = 'start cmd.exe';
-    } else if (raw.includes('taskmgr') || raw.includes('task manager')) {
-      binary = 'taskmgr.exe';
-    } else if (raw.includes('paint') || raw.includes('mspaint')) {
-      binary = 'mspaint.exe';
-    } else if (raw.includes('code') || raw.includes('vscode')) {
-      binary = 'code';
-    } else {
-      binary = `start "" "${raw}"`;
-    }
-
-    const command = binary.startsWith('start') ? binary : `start "" "${binary}"`;
-
-    exec(command, (err) => {
-      if (err) {
-        logCallback('error', `[App Launcher Failed] Could not launch "${raw}": ${err.message}`);
-        resolve({ success: false, error: err.message, appName: raw });
-      } else {
-        logCallback('automation', `[App Launcher] Application "${raw}" opened successfully.`);
-        resolve({ success: true, appName: raw, command });
-      }
-    });
-  });
-}
-
-// ============================================================================
-// 4. ACCURATE LOCAL OCR & SCREEN TEXT EXTRACTION
-// ============================================================================
-
 async function readEntireScreenOCR(logCallback = () => {}) {
   if (!screenshot) {
     logCallback('error', '[Local OCR] screenshot-desktop module is missing.');
@@ -147,6 +102,9 @@ async function readEntireScreenOCR(logCallback = () => {}) {
   }
 }
 
+/**
+ * Searches local display for exact or fuzzy word positions.
+ */
 async function captureAndFindText(targetText, logCallback = () => {}) {
   const target = (targetText || '').trim().toLowerCase();
   if (!target) {
@@ -217,7 +175,7 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
 }
 
 // ============================================================================
-// 5. MOUSE MOVEMENT & KEYBOARD AUTOMATION
+// 4. MOUSE MOVEMENT & KEYBOARD AUTOMATION
 // ============================================================================
 
 async function clickAt(x, y, button = 'left', logCallback = () => {}) {
@@ -436,7 +394,7 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
 }
 
 // ============================================================================
-// 6. YOUTUBE API v3 & GOOGLE VERIFICATION
+// 5. YOUTUBE API v3 & GOOGLE VERIFICATION
 // ============================================================================
 
 async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browserName = 'chrome') {
@@ -594,9 +552,54 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 }
 
 // ============================================================================
-// 7. FILE SYSTEM HANDLER & NOTEPAD STREAMING
+// 6. MULTI-STEP APPLICATION LAUNCHING & FILE CREATION
 // ============================================================================
 
+async function launchApp(appName, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const raw = (appName || '').trim().toLowerCase();
+    logCallback('automation', `[App Launcher] Request to open application: "${raw}"`);
+
+    let binary = '';
+    if (raw.includes('notepad') || raw.includes('نوٹ پیڈ')) {
+      binary = 'notepad.exe';
+    } else if (raw.includes('calc') || raw.includes('calculator') || raw.includes('کیلکولیٹر')) {
+      binary = 'calc.exe';
+    } else if (raw.includes('chrome') || raw.includes('کروم')) {
+      binary = 'start chrome';
+    } else if (raw.includes('edge')) {
+      binary = 'start msedge';
+    } else if (raw.includes('explorer') || raw.includes('files') || raw.includes('folder')) {
+      binary = 'explorer.exe';
+    } else if (raw.includes('cmd') || raw.includes('terminal') || raw.includes('command')) {
+      binary = 'start cmd.exe';
+    } else if (raw.includes('taskmgr') || raw.includes('task manager')) {
+      binary = 'taskmgr.exe';
+    } else if (raw.includes('paint') || raw.includes('mspaint')) {
+      binary = 'mspaint.exe';
+    } else if (raw.includes('code') || raw.includes('vscode')) {
+      binary = 'code';
+    } else {
+      binary = `start "" "${raw}"`;
+    }
+
+    const command = binary.startsWith('start') ? binary : `start "" "${binary}"`;
+
+    exec(command, (err) => {
+      if (err) {
+        logCallback('error', `[App Launcher Failed] Could not launch "${raw}": ${err.message}`);
+        resolve({ success: false, error: err.message, appName: raw });
+      } else {
+        logCallback('automation', `[App Launcher] Application "${raw}" opened successfully.`);
+        resolve({ success: true, appName: raw, command });
+      }
+    });
+  });
+}
+
+/**
+ * Direct file creation on physical disk using Node.js fs.
+ */
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
   try {
     let baseDir = targetDirectory;
@@ -625,6 +628,13 @@ async function createDesktopFile(fileName, fileContent, targetDirectory = null, 
   }
 }
 
+/**
+ * Sequential Multi-Step Live Notepad Automation:
+ * 1. Launches Notepad.exe natively.
+ * 2. Writes code directly to physical disk.
+ * 3. Streams code typewriter chunks to UI.
+ * 4. Activates and focuses the Notepad window.
+ */
 async function liveNotepadCodeStream(filename, content, targetDirectory = null, isUpdate = false, logCallback = () => {}, mainWindow = null) {
   try {
     const baseDir = targetDirectory ? targetDirectory : getDesktopDir();
@@ -644,6 +654,7 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
 
     logCallback('automation', `[Notepad] Writing file: "${fullPath}" (Update: ${isUpdate ? 'IN-PLACE' : 'NEW'})`);
 
+    // Stream typewriter chunks to frontend console
     if (mainWindow && !mainWindow.isDestroyed()) {
       const chunkSize = 40;
       for (let i = 0; i < content.length; i += chunkSize) {
@@ -662,8 +673,10 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       });
     }
 
+    // Write file directly to disk
     fs.writeFileSync(fullPath, content, 'utf-8');
 
+    // Launch Notepad.exe and bring to front
     if (process.platform === 'win32') {
       exec(`notepad.exe "${fullPath}"`);
       setTimeout(() => {
@@ -710,7 +723,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
 }
 
 // ============================================================================
-// 8. MASTER ACTION DISPATCHER
+// 7. MASTER ACTION DISPATCHER
 // ============================================================================
 
 async function executeAction(actionObj, logCallback = () => {}, mainWindow = null) {
