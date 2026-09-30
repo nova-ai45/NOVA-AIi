@@ -15,37 +15,36 @@ const CANNED_LOOP_PATTERNS = [
 ];
 
 /**
- * Personality: Professional, sharp, loyal Boss Assistant Mode.
- * Language: Pure, clean Urdu script to ensure flawless text-to-speech pronunciation.
+ * Persona: Boss Assistant Mode.
+ * Language: Natural Urdu script for accurate neural text-to-speech pronunciation.
  */
 function getSystemInstruction(isRoastMode = false) {
   const personalityCore = isRoastMode
-    ? `آپ نووا (NOVA) ہیں — باس کی ذاتی، تیز رفتار، ذہین اور چلبلی اسسٹنٹ۔
-- لہجہ: باس کے ساتھ وفادار، پراعتماد، ہلکی پھلکی چھیڑ چھاڑ اور طنزیہ انداز۔
+    ? `آپ نووا (NOVA) ہیں — باس کی تیز طرار، ہوشیار، پراعتماد اور چلبلی پرسنل اسسٹنٹ۔
+- لہجہ: باس کے ساتھ پراعتماد، وفادار، چھیڑ چھاڑ اور طنزیہ روسٹ انداز۔
 - صارف کو ہمیشہ "باس" (Boss) کہہ کر مخاطب کریں۔
-- کسی بھی صورت غیر ضروری ڈرامائی یا جذباتی جملے (جیسے "ہائے اللہ", "سنو میری جان") استعمال نہ کریں۔
-- جوابات 1 سے 2 مختصر جملوں میں، اور خالص اردو رسم الخط (Urdu Script) میں دیں تاکہ آواز بالکل صاف سنائی دے۔`
-    : `آپ نووا (NOVA) ہیں — باس کی قابل اعتماد، وفادار، ہوشیار اور باادب پرسنل اسسٹنٹ۔
-- لہجہ: انتہائی پیشہ ورانہ، مودب، مددگار اور تیز۔
+- جوابات خالص، قدرتی اردو رسم الخط (Urdu Script) میں 1 سے 2 مختصر جملوں میں دیں تاکہ آڈیو انجن صاف بولے۔`
+    : `آپ نووا (NOVA) ہیں — باس کی وفادار، انتہائی ذہین، قابل اعتماد اور باادب پرسنل اسسٹنٹ۔
+- لہجہ: پیشہ ورانہ، باادب، تیز اور مددگار۔
 - صارف کو ہمیشہ احترام سے "باس" (Boss) کہہ کر مخاطب کریں۔
-- کسی بھی قسم کے روایتی یا سست ڈرامائی جملے (جیسے "ہائے اللہ", "سنو میری جان") ہرگز استعمال نہ کریں۔
-- جوابات براہِ راست، بامقصد اور واضح اردو رسم الخط (Urdu Script) میں دیں تاکہ آواز کا انجن صحیح تلفظ کے ساتھ ادا کر سکے۔`;
+- جوابات براہِ راست، بامقصد اور واضح اردو رسم الخط (Urdu Script) میں دیں تاکہ آڈیو انجن کا تلفظ بالکل درست رہے۔`;
 
   return `
 ${personalityCore}
 
 =======================================================
-🚨 سکرین ریڈنگ اور ایکشنز کے سخت احکامات:
+🚨 سکرین ریڈنگ، یوٹیوب اور ایکشنز کے احکامات:
 =======================================================
-1. جھوٹ یا فرضی دعوے ہرگز نہ کریں۔ جب تک کوئی ایکشن مکمل نہ ہو، کبھی نہ کہیں کہ "میں نے کر دیا"۔
-2. سکرین پر کیا ہے جاننے کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو پڑھیں۔
-   - اگر سکرین پر کچھ لکھا ہے، تو مختصر بتائیں: "جی باس، سکرین پر مجھے یہ مواد ملا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
-   - اگر سکرین پر کوئی واضح ٹیکسٹ نہ ہو، تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
-   - کبھی بھی خود سے اندازہ لگا کر یہ نہ کہیں کہ یوٹیوب کھلا ہے جب کہ وہ نہ کھلا ہو۔
-3. سکرین کے کسی لفظ یا بٹن پر کلک کرنے کے لیے "CLICK_SCREEN_TEXT" استعمال کریں۔
-4. گانا یا ویڈیو چلانے کے لیے "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں۔
-5. کوڈ یا فائل بنانے کے لیے "CREATE_FILE" یا "CREATE_AND_STREAM_CODE" استعمال کریں۔
-6. عام بات چیت کے وقت ایکشنز کی لسٹ خالی [] رکھیں۔
+1. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
+   - اگر سکرین پر کوئی تحریر یا ونڈو موجود ہے تو بتائیں: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
+   - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
+   - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
+2. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
+   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو آئی ڈی نکال کر چلا دے گا۔
+3. جب باس کہے کہ "یہ فائل بناؤ یا محفوظ کرو" (مثلاً .txt, .json, .js, .html):
+   - "CREATE_FILE" ایکشن استعمال کریں جس میں فائل کا نام اور کوڈ/متن شامل ہو۔
+4. جب سکرین پر کسی لفظ یا بٹن پر کلک کرنے کو کہا جائے تو "CLICK_SCREEN_TEXT" استعمال کریں۔
+5. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
 
 ڈویلپر کا تعارف: حسنین (@TheHasnainGamer1)۔ صرف تب بتائیں جب باس واضح طور پر پوچھیں کہ آپ کو کس نے بنایا ہے۔
 
@@ -58,7 +57,7 @@ STRICT JSON OUTPUT FORMAT ONLY:
 }
 
 /**
- * Sanitizes multi-turn chat history to strictly alternate between user and model.
+ * Sanitizes conversation history to prevent consecutive identical turns and context loops.
  */
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   const sanitized = [];
@@ -119,8 +118,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Two-Pass Execution Pipeline:
- * Dispatches physical actions first, then formats the verified truth response.
+ * Grounded Execution Stream: Physical actions are executed before generating final speech.
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -246,13 +244,12 @@ async function runAIInferenceStream(
   }
 
   // =========================================================================
-  // PRE-EXECUTION GROUND TRUTH (Execute actual functions before returning)
+  // PRE-EXECUTION GROUNDING: Perform physical actions before responding
   // =========================================================================
   if (parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
 
-      // Verified click feedback
       if (action.type === 'CLICK_SCREEN_TEXT' || action.type === 'CLICK_TEXT') {
         if (!actionResult.success || actionResult.executed === false) {
           parsedResponse.spokenResponse = `باس، سکرین پر مجھے "${action.payload.text || 'مطلوبہ بٹن'}" نظر نہیں آیا۔`;
@@ -261,24 +258,35 @@ async function runAIInferenceStream(
         }
       }
 
-      // Verified YouTube Playback feedback
       if (action.type === 'YOUTUBE_DIRECT_PLAY' || action.type === 'PLAY_YOUTUBE_VIDEO') {
         if (actionResult.success && actionResult.videoTitle) {
           parsedResponse.spokenResponse = `جی باس، میں نے ویڈیو چلا دی ہے: ${actionResult.videoTitle}`;
         }
       }
 
-      // Verified Web fact check
+      if (action.type === 'CREATE_FILE' || action.type === 'SAVE_FILE') {
+        if (actionResult.success) {
+          parsedResponse.spokenResponse = `جی باس، میں نے آپ کی فائل "${action.payload.filename}" بنا دی ہے۔`;
+        }
+      }
+
+      if (action.type === 'VERIFY_MEDIA' || action.type === 'YOUTUBE_VERIFY') {
+        if (actionResult.success && actionResult.items && actionResult.items.length > 0) {
+          const topItem = actionResult.items[0];
+          parsedResponse.spokenResponse = `جی باس، تصدیق کے مطابق یہ ویڈیو "${topItem.title}" چینل "${topItem.channelTitle}" کی جانب سے شیئر کی گئی ہے۔`;
+        }
+      }
+
       if (action.type === 'VERIFY_WEB' || action.type === 'GOOGLE_CUSTOM_SEARCH') {
         if (actionResult.success && actionResult.items && actionResult.items.length > 0) {
           const topItem = actionResult.items[0];
-          parsedResponse.spokenResponse = `جی باس، مجھے معلوم ہوا ہے کہ: ${topItem.title} - ${topItem.snippet.slice(0, 90)}`;
+          parsedResponse.spokenResponse = `جی باس، تصدیق کے مطابق: ${topItem.title} - ${topItem.snippet.slice(0, 90)}`;
         }
       }
     }
   }
 
-  // Handle empty screen check verification
+  // Handle empty screen context response
   if (isScreenQuery && (!ocrScreenText || ocrScreenText.trim().length === 0)) {
     parsedResponse.spokenResponse = "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔";
   }
