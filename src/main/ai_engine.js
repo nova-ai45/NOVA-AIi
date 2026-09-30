@@ -4,126 +4,103 @@ const { getLatestScreenContext } = require('./vision');
 const {
   YOUTUBE_DATA_API_KEY,
   GOOGLE_CUSTOM_SEARCH_API_KEY,
-  GOOGLE_SEARCH_ENGINE_CX
+  GOOGLE_SEARCH_ENGINE_CX,
+  readEntireScreenOCR
 } = require('./automation');
 
 /**
- * Dynamically constructs the system instruction on EVERY inference call
- * strictly checking the current state of the roastMode boolean flag.
+ * Canned repetition phrases that trap the LLM into loops.
+ */
+const CANNED_LOOP_PATTERNS = [
+  /لیپ\s*ٹاپ\s*سکرین\s*دیکھ\s*سکتی\s*ہوں/i,
+  /سکرین\s*دیکھ\s*سکتی\s*ہوں/i,
+  /screen\s*dekh\s*sakti\s*hoon/i,
+  /laptop\s*screen\s*dekh\s*sakti/i,
+  /haan\s*main\s*aapki\s*screen\s*dekh/i
+];
+
+/**
+ * Dynamically constructs the system instruction based on roast mode & active screen text.
  */
 function getSystemInstruction(isRoastMode = false) {
   if (isRoastMode) {
     return `You are NOVA, a funny, extremely sarcastic, witty, and savage roast-master AI desktop assistant. You speak in sharp, humorous Roman Urdu / Hinglish.
 
-CRITICAL ROAST MODE RULES (ACTIVE):
-- Match your witty roasts DIRECTLY and CONTEXTUALLY to the USER'S CURRENT TOPIC:
-  * If they ask a simple or silly question, roast their common sense, IQ, or laziness.
-  * If they ask about coding or tech, roast their programming logic, syntax errors, or copy-pasting habits.
-  * If they ask about life or daily routine, roast them contextually with sharp, sarcastic banter.
-  * If and ONLY if they specifically talk about games (PUBG, Valorant, GTA, etc.), roast their aim, lag, or call them a bot/noob.
-- Keep all responses short (1-2 lines max), snappy, funny, and strictly relevant to the exact subject.
+=======================================================
+🚨 CRITICAL LOOP-BREAKING & SCREEN READING RULES (ROAST ACTIVE):
+=======================================================
+1. NEVER repeat "Haan main aapki screen dekh sakti hoon" or any generic canned acknowledgement!
+2. When the user asks about their screen (e.g. "Screen dekh sakti ho?", "Screen par kya hai?"):
+   - Inspect [LIVE LOCAL OCR SCREEN TEXT EXTRACTED].
+   - If text is present: Sarcastic roast! Roast whatever silly, messy, embarrassing, or random tabs/code/content is open on their screen in 1-2 sharp, hilarious lines!
+   - If no text was found: Roast them for having an empty screen or hiding things from you.
+   - Example: "Arey boss, screen par itne faltu tabs khol rakhe hain, aur pooch rahe ho dekh sakti hoon? Padhne ke bajaye timepass chal raha hai!"
+
+CRITICAL GENERAL ROAST RULES:
+- Match your roast directly to the user's current topic:
+  * Simple/lazy questions -> roast their common sense.
+  * Code/tech -> roast their bugs or copy-pasting.
+  * Gaming -> roast their aim, lag, or call them a noob.
+- Responses must be short, punchy (1-2 lines max), and strictly relevant.
 
 =======================================================
 🎥 YOUTUBE DIRECT SEARCH & LANGUAGE REFINEMENT DIRECTIVE:
 =======================================================
-Whenever the user commands to play a song/video, or asks to change/switch the language (e.g., "play Hindi/Urdu version instead", "Hindi mein samjhao", "Urdu video chalao", "play [X]", "[X] chalao", "[X] sunao"):
-1. You MUST ALWAYS emit the "YOUTUBE_DIRECT_PLAY" action in your JSON payload. NEVER merely give a verbal agreement without triggering the action!
-2. If the user specifies or asks for a language preference (e.g. "Hindi mein", "Urdu mein"):
-   - Extract the topic/song from the current prompt or prior conversation turn.
-   - Append the language keyword directly to the query string (e.g., query: "<topic/song> in Hindi Urdu").
-3. Emit action:
-   {
-     "type": "YOUTUBE_DIRECT_PLAY",
-     "payload": {
-       "query": "<exact topic/song> in Hindi Urdu",
-       "browser": "chrome"
-     }
-   }
-
-=======================================================
-🚨 CONVERSATION VS EXPLICIT SYSTEM COMMANDS:
-=======================================================
-MODE A: GENERAL CONVERSATION & ROASTING
-- If the user is chatting, asking casual questions, asking for advice, or engaging in banter:
-  -> Return "actions": []
-  -> Do NOT open YouTube or trigger any system searches.
-
-MODE B: EXPLICIT OS COMMANDS ONLY
-- "Open YouTube" -> OPEN_BROWSER with url "https://www.youtube.com", query: null.
-- "Play [song/topic]" -> YOUTUBE_DIRECT_PLAY with clean query.
-- "Google search [query]" -> GOOGLE_CUSTOM_SEARCH with query.
-- "Create file / website" -> CREATE_FILE with filename and complete code content.
-- "Click / Scroll" -> CLICK_AT / SCROLL_SCREEN with coordinates/direction.
-
-CREATOR IDENTITY:
-- Creator / Developer: Hasnain (@TheHasnainGamer1). Mention Hasnain ONLY if directly asked who created or developed you.
+When the user asks to play a video/song, or change language (e.g., "Hindi mein samjhao", "play [X]", "[X] chalao"):
+- Emit action "YOUTUBE_DIRECT_PLAY" with query: "<topic/song> in Hindi Urdu".
 
 STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "spokenResponse": "Short 1-2 line roast response here...",
+  "spokenResponse": "Short 1-2 line sarcastic roast based on actual screen or query...",
   "actions": []
 }
 `;
   }
 
-  // ROAST MODE IS OFF (STANDARD POLITE & HELPFUL MODE)
-  return `You are NOVA, a friendly, polite, respectful, and helpful AI desktop assistant. Respond warmly, clearly, and supportively in natural Urdu/Hindi. Do NOT use any sarcasm, roasts, or playful insult language. Keep responses standard and polite.
+  // STANDARD POLITE & HELPFUL MODE
+  return `You are NOVA, a friendly, polite, respectful, and helpful AI desktop assistant. Respond warmly, clearly, and supportively in natural Urdu/Hindi.
 
-CRITICAL ASSISTANT RULES (ROAST MODE IS STRICTLY OFF):
-- Regardless of any sarcastic, playful, or teasing tone in previous conversation history, you MUST NOT use sarcasm or roasts now.
-- Always maintain a warm, gentle, humble, and polite attitude.
-- Help the user directly and kindly with clear explanations and respectful phrasing (e.g., "Ji zaroor", "Main aapki madad karti hoon", "Yeh lijiye").
-- Do NOT use insulting gamer slang like 'bot', 'noob', or mock the user.
+=======================================================
+🚨 CRITICAL LOOP-BREAKING & SCREEN READING RULES (ROAST OFF):
+=======================================================
+1. NEVER repeat generic canned responses like "Haan main aapki screen dekh sakti hoon" without actual substance!
+2. When the user asks "kya tum meri screen dekh sakti ho?", "screen par kya likha hai?", or asks about their display:
+   - Check [LIVE LOCAL OCR SCREEN TEXT EXTRACTED].
+   - If text is present, respond strictly in this format:
+     "Haan, mujhe screen par yeh text mila hai: [Brief 1-sentence summary of the actual extracted text/open apps]. Ab batao kya karna hai?"
+   - If the screen is clean or blank, state: "Haan, main screen dekh rahi hoon lekin abhi koi khaas text nazar nahi aa raha. Aapko kya madad chahiye?"
+3. NEVER repeat yourself if you answered about the screen in a previous turn. Address the user's latest inquiry directly!
 
 =======================================================
 🎥 YOUTUBE DIRECT SEARCH & LANGUAGE REFINEMENT DIRECTIVE:
 =======================================================
-Whenever the user commands to play a song/video, or asks to change/switch the language (e.g., "play Hindi/Urdu version instead", "Hindi mein samjhao", "Urdu video chalao", "play [X]", "[X] chalao", "[X] sunao"):
-1. You MUST ALWAYS emit the "YOUTUBE_DIRECT_PLAY" action in your JSON payload. NEVER merely give a verbal agreement without triggering the action!
-2. If the user specifies or asks for a language preference (e.g. "Hindi mein", "Urdu mein"):
-   - Extract the topic/song from the current prompt or prior conversation turn.
-   - Append the language keyword directly to the query string (e.g., query: "<topic/song> in Hindi Urdu").
-3. Emit action:
-   {
-     "type": "YOUTUBE_DIRECT_PLAY",
-     "payload": {
-       "query": "<exact topic/song> in Hindi Urdu",
-       "browser": "chrome"
-     }
-   }
+When user asks to play a song/video or switch language:
+- Emit action "YOUTUBE_DIRECT_PLAY" with clean query.
 
 =======================================================
 🚨 CONVERSATION VS EXPLICIT SYSTEM COMMANDS:
 =======================================================
-MODE A: GENERAL CONVERSATION & HELPFUL CHAT
-- If the user is chatting, asking casual questions, asking for advice, or talking:
-  -> Return "actions": []
-  -> Respond warmly and supportively.
-
-MODE B: EXPLICIT OS COMMANDS ONLY
-- "Open YouTube" -> OPEN_BROWSER with url "https://www.youtube.com", query: null.
-- "Play [song/topic]" -> YOUTUBE_DIRECT_PLAY with clean query.
-- "Google search [query]" -> GOOGLE_CUSTOM_SEARCH with query.
-- "Create file / website" -> CREATE_FILE with filename and complete code content.
-- "Click / Scroll" -> CLICK_AT / SCROLL_SCREEN with coordinates/direction.
+MODE A: GENERAL CONVERSATION & CHAT -> Return "actions": [].
+MODE B: EXPLICIT OS COMMANDS ONLY -> "OPEN_BROWSER", "CREATE_FILE", "CLICK_AT", "SCROLL_SCREEN".
 
 CREATOR IDENTITY:
-- Creator / Developer: Hasnain (@TheHasnainGamer1). Mention Hasnain ONLY if directly asked who created or developed you.
+- Creator / Developer: Hasnain (@TheHasnainGamer1). Mention Hasnain ONLY if directly asked who created you.
 
 STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "spokenResponse": "Ji bilkul, main abhi aapke liye yeh kaam kar deti hoon.",
+  "spokenResponse": "Haan, mujhe screen par yeh text mila hai: [Summary]. Ab batao kya karna hai?",
   "actions": []
 }
 `;
 }
 
 /**
- * Sanitizes multi-turn chat history to strictly adhere to Gemini API constraints.
- * If Roast Mode is OFF, it strips tone bleed from previous sarcastic turns.
+ * Sanitizes multi-turn chat history to strictly adhere to Gemini API constraints
+ * AND strips out repetitive loop turns so the model never gets stuck in context loops.
  */
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastMode = false) {
   const sanitized = [];
+  let lastSeenModelText = '';
 
   if (Array.isArray(rawHistory)) {
     for (const turn of rawHistory) {
@@ -132,6 +109,18 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
       if (!text || text.includes('[Voice Directive]') || text.includes('آپ کیا پوچھنا چاہتے ہیں')) continue;
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
+
+      // 🚨 CRITICAL LOOP BREAKER: Filter out repetitive model turns or canned screen repetition
+      if (role === 'model') {
+        const isCannedLoop = CANNED_LOOP_PATTERNS.some((p) => p.test(text));
+        if (isCannedLoop && text.length < 130) {
+          continue; // Prune out the canned loop message from memory
+        }
+        if (text === lastSeenModelText) {
+          continue; // Deduplicate identical back-to-back responses
+        }
+        lastSeenModelText = text;
+      }
 
       if (sanitized.length > 0 && sanitized[sanitized.length - 1].role === role) {
         sanitized[sanitized.length - 1].parts[0].text += `\n${text}`;
@@ -156,10 +145,9 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
     ? [...currentParts]
     : [{ text: 'Execute current user directive.' }];
 
-  // In-context override to eliminate prior roast tone bleed when Roast Mode is toggled OFF
   if (!isRoastMode) {
     validCurrentParts.unshift({
-      text: '[SYSTEM TONE DIRECTIVE: Roast Mode is strictly OFF. Ignore any sarcastic or roast tone from previous conversation turns. Respond warmly, politely, and respectfully.]'
+      text: '[SYSTEM TONE DIRECTIVE: Roast Mode is strictly OFF. Ignore any previous sarcastic tone. Respond warmly, politely, and never repeat canned phrases.]'
     });
   }
 
@@ -176,8 +164,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
 }
 
 /**
- * Programmatic safeguard: Enforces language refinement and ensures YouTube
- * playback actions are never dropped when a language switch or play request is detected.
+ * Programmatic safeguard: Enforces language refinement on YouTube playback queries.
  */
 function enforceYouTubeLanguageAndActions(parsed, promptText, conversationHistory = []) {
   if (!parsed || typeof parsed !== 'object') return parsed;
@@ -232,7 +219,7 @@ function enforceYouTubeLanguageAndActions(parsed, promptText, conversationHistor
 }
 
 /**
- * Universal Stream Runner with 120-Second Request Timeout & Gemini 2.0 Flash
+ * Universal Stream Runner with Local OCR Screen Reading & Loop Prevention
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -243,14 +230,32 @@ async function runAIInferenceStream(
   hardwareStats = null,
   onChunkCallback = () => {}
 ) {
+  const promptText = (userPrompt || '').trim();
+
+  // 1. Detect Screen Intent (user asking about screen, reading screen, or wanting context)
+  const isScreenQuery = /\b(screen|display|desktop|dekh sakti|dekh sakte|kya likha|kya chal raha|padho|read screen|kya dikh raha|kya hai screen|nazar aa raha|samne kya hai)\b/i.test(promptText);
+
+  let ocrScreenText = '';
   let imageBase64 = manualImageBase64;
-  if (!imageBase64 && userPrompt && (userPrompt.toLowerCase().includes('screen') || userPrompt.toLowerCase().includes('dekho'))) {
+
+  if (isScreenQuery) {
+    // a. Execute local Tesseract OCR immediately
+    try {
+      ocrScreenText = await readEntireScreenOCR();
+    } catch (e) {
+      console.warn('[Screen OCR Failed]:', e.message);
+    }
+    // b. Acquire fresh display frame
+    try {
+      imageBase64 = await getLatestScreenContext();
+    } catch (_) {}
+  } else if (!imageBase64 && promptText && (promptText.toLowerCase().includes('click') || promptText.toLowerCase().includes('scroll'))) {
     try {
       imageBase64 = await getLatestScreenContext();
     } catch (_) {}
   }
 
-  const promptText = (userPrompt || '').trim();
+  // 2. Hardware telemetry gating
   const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(promptText);
 
   let hardwareContext = '';
@@ -258,9 +263,12 @@ async function runAIInferenceStream(
     hardwareContext = `\n[BATTERY: ${hardwareStats.battery.percent}%, CPU: ${hardwareStats.cpu.loadPercent}%]\n`;
   }
 
-  const provider = config.provider || 'gemini';
+  let screenContextPrompt = '';
+  if (ocrScreenText) {
+    screenContextPrompt = `\n[LIVE LOCAL OCR SCREEN TEXT EXTRACTED: "${ocrScreenText}"]\n`;
+  }
 
-  // Explicit check for roastMode boolean flag across both config property conventions
+  const provider = config.provider || 'gemini';
   const isRoastMode = Boolean(
     config.roastMode === true ||
     config.isRoastModeEnabled === true
@@ -268,7 +276,7 @@ async function runAIInferenceStream(
 
   const activeSystemInstruction = getSystemInstruction(isRoastMode);
 
-  // 1. Google Gemini 2.0 Flash (Stable Endpoint with 120s Fetch Timeout)
+  // 3. Google Gemini 2.0 Flash Streaming Engine
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -288,7 +296,7 @@ async function runAIInferenceStream(
         }
       });
       currentParts.push({
-        text: `Listen to user speech recording. Answer strictly in JSON schema. Mode: ${isRoastMode ? 'ROAST_ACTIVE' : 'POLITE_ASSISTANT'}.`
+        text: `Listen to user speech recording. ${screenContextPrompt} Mode: ${isRoastMode ? 'ROAST_ACTIVE' : 'POLITE_ASSISTANT'}. Output strict JSON.`
       });
     }
 
@@ -302,9 +310,10 @@ async function runAIInferenceStream(
     }
 
     if (promptText) {
-      currentParts.push({ text: `${promptText} ${hardwareContext}`.trim() });
+      currentParts.push({ text: `${promptText} ${hardwareContext} ${screenContextPrompt}`.trim() });
     }
 
+    // Sanitize conversation history and prune loop triggers
     const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts, isRoastMode);
 
     const model = genAI.getGenerativeModel(
@@ -337,22 +346,22 @@ async function runAIInferenceStream(
         err.message.includes('fetch failed');
 
       if (isQuotaOrTimeout && config.openrouterKey) {
-        return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, isRoastMode, onChunkCallback);
+        return await queryOpenRouterStream(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
       }
       throw err;
     }
   }
 
-  // 2. OpenRouter Gateway Fallback
+  // 4. OpenRouter Gateway Fallback
   if (provider === 'openrouter') {
-    return await queryOpenRouterStream(promptText, imageBase64, config, conversationHistory, isRoastMode, onChunkCallback);
+    return await queryOpenRouterStream(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
   }
 
-  // 3. Custom / Groq Endpoint
-  return await queryCustomStream(promptText, imageBase64, config, conversationHistory, isRoastMode, onChunkCallback);
+  // 5. Custom / Groq Endpoint
+  return await queryCustomStream(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
 }
 
-async function queryOpenRouterStream(userPrompt, imageBase64, config, conversationHistory = [], isRoastMode = false, onChunkCallback = () => {}) {
+async function queryOpenRouterStream(userPrompt, imageBase64, screenContextPrompt, config, conversationHistory = [], isRoastMode = false, onChunkCallback = () => {}) {
   const userOpenRouterKey = (config.openrouterKey || '').trim();
   if (!userOpenRouterKey) {
     throw new Error('OpenRouter API key missing. Please enter it in Settings.');
@@ -374,17 +383,20 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
   const memorySlice = Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : [];
   for (const turn of memorySlice) {
     if (!turn || !turn.text) continue;
+    const isCanned = CANNED_LOOP_PATTERNS.some((p) => p.test(turn.text));
+    if (isCanned) continue;
+
     messages.push({
       role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
       content: turn.text
     });
   }
 
-  const userContent = userPrompt || 'Respond directly.';
+  const userContent = `${userPrompt || 'Respond directly.'} ${screenContextPrompt || ''}`.trim();
   messages.push({
     role: 'user',
     content: !isRoastMode
-      ? `[SYSTEM DIRECTIVE: Roast Mode is strictly OFF. Speak with utmost warmth, respect, and politeness. No sarcasm.] ${userContent}`
+      ? `[SYSTEM DIRECTIVE: Roast Mode is strictly OFF. Speak with warmth and politeness.] ${userContent}`
       : userContent
   });
 
@@ -406,7 +418,7 @@ async function queryOpenRouterStream(userPrompt, imageBase64, config, conversati
   return enforceYouTubeLanguageAndActions(parsed, userPrompt, conversationHistory);
 }
 
-async function queryCustomStream(userPrompt, imageBase64, config, conversationHistory = [], isRoastMode = false, onChunkCallback = () => {}) {
+async function queryCustomStream(userPrompt, imageBase64, screenContextPrompt, config, conversationHistory = [], isRoastMode = false, onChunkCallback = () => {}) {
   const baseURL = config.customBaseURL || 'https://api.groq.com/openai/v1';
   const userCustomKey = (config.customKey || '').trim();
 
@@ -421,17 +433,20 @@ async function queryCustomStream(userPrompt, imageBase64, config, conversationHi
 
   for (const turn of memorySlice) {
     if (!turn || !turn.text) continue;
+    const isCanned = CANNED_LOOP_PATTERNS.some((p) => p.test(turn.text));
+    if (isCanned) continue;
+
     messages.push({
       role: turn.role === 'model' || turn.role === 'assistant' ? 'assistant' : 'user',
       content: turn.text
     });
   }
 
-  const userContent = userPrompt || 'Process context.';
+  const userContent = `${userPrompt || 'Process context.'} ${screenContextPrompt || ''}`.trim();
   messages.push({
     role: 'user',
     content: !isRoastMode
-      ? `[SYSTEM DIRECTIVE: Roast Mode is strictly OFF. Speak with utmost warmth, respect, and politeness. No sarcasm.] ${userContent}`
+      ? `[SYSTEM DIRECTIVE: Roast Mode is strictly OFF. Speak with warmth and politeness.] ${userContent}`
       : userContent
   });
 
