@@ -51,7 +51,7 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 let mainWindow = null;
 
 // ============================================================================
-// 🧠 LOCAL PERSISTENT MEMORY: memory.json in userData directory
+// 🧠 PERSISTENT LOCAL MEMORY: memory.json in userData directory
 // ============================================================================
 function getMemoryFilePath() {
   const userDir = app.getPath('userData');
@@ -310,10 +310,16 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // IPC Handlers
+  // 1. Keep-Alive / Heartbeat IPC to prevent WebSocket & Channel Drops
+  ipcMain.handle('nova:ping', () => {
+    return { status: 'alive', timestamp: Date.now() };
+  });
+
+  // 2. Settings IPC
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
+  // 3. Hardware & Memory IPC
   ipcMain.handle('nova:getHardwareStats', async () => {
     return await fetchFullHardwareStats();
   });
@@ -328,6 +334,7 @@ app.whenReady().then(() => {
     return clearLocalPersistentMemory();
   });
 
+  // 4. Mouse & Screen Control IPCs
   ipcMain.handle('nova:clickAt', async (_, { x, y, button }) => {
     if (!automation || !automation.clickAt) return { success: false };
     return await automation.clickAt(x, y, button || 'left', broadcastLog);
@@ -343,6 +350,7 @@ app.whenReady().then(() => {
     return await automation.longPressAt(x, y, durationMs || 1200, broadcastLog);
   });
 
+  // 5. Speech & Audio Output IPC
   ipcMain.handle('nova:stopSpeech', () => {
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
@@ -362,6 +370,7 @@ app.whenReady().then(() => {
     }
   });
 
+  // 6. Screen Capture & OS Files
   ipcMain.handle('nova:captureScreen', async () => {
     try {
       if (!vision || !vision.captureActiveDisplay) return { success: false, error: 'Vision unavailable' };
@@ -373,8 +382,8 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir, isUpdate }) => {
-    if (!automation || !automation.createDesktopFile) return { success: false };
-    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
+    if (!automation || !automation.liveNotepadCodeStream) return { success: false };
+    return await automation.liveNotepadCodeStream(filename, content, targetDir, isUpdate, broadcastLog, mainWindow);
   });
 
   ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
@@ -382,7 +391,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master Command Dispatcher & Response Audio Synthesizer
+  // 7. Master AI Command Execution Pipeline (With Watchdog to eliminate infinite "Thinking..." state)
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
@@ -390,9 +399,10 @@ app.whenReady().then(() => {
       ttsEngine.cancelActiveTTS();
     }
 
-    try {
-      broadcastState('thinking');
+    // Switch UI state immediately to processing
+    broadcastState('processing');
 
+    try {
       let visionData = null;
       if (includeVision && vision && vision.getLatestScreenContext) {
         visionData = await vision.getLatestScreenContext();
@@ -406,46 +416,58 @@ app.whenReady().then(() => {
         : globalMemoryContext;
 
       if (text) broadcastLog('command', `User Directive: "${text}"`);
+      else if (audioBase64) broadcastLog('command', `Audio stream received -> Analyzing with Gemini...`);
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
         throw new Error('AI Engine subsystem is unavailable.');
       }
 
-      const aiResponse = await aiEngine.runAIInferenceStream(
-        text,
-        audioBase64,
-        visionData,
-        settings,
-        historyContext,
-        hardwareStats,
-        (streamChunk) => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
-          }
-        },
-        broadcastLog,
-        mainWindow
-      );
+      // Execute AI Stream with safety watchdog timeout (65 seconds)
+      const aiResponse = await Promise.race([
+        aiEngine.runAIInferenceStream(
+          text,
+          audioBase64,
+          visionData,
+          settings,
+          historyContext,
+          hardwareStats,
+          (streamChunk) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
+            }
+          },
+          broadcastLog,
+          mainWindow
+        ),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('AI Engine inference timeout after 65 seconds')), 65000)
+        )
+      ]);
 
-      // Persist to local memory.json
+      // Save valid interactions into persistent memory.json
       if (aiResponse.spokenResponse) {
         globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
         globalMemoryContext.push({ role: 'model', text: aiResponse.spokenResponse });
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
-      // Generate instant TTS reply
+      // Generate instant TTS neural voice audio
       let audioResult = null;
       const responseToSpeak = (aiResponse.spokenResponse || '').trim();
 
       if (settings.autoSpeak && responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
-        audioResult = await ttsEngine.synthesizeNeuralSpeech(
-          responseToSpeak,
-          settings.voice || 'hi-IN-SwaraNeural'
-        );
+        try {
+          audioResult = await ttsEngine.synthesizeNeuralSpeech(
+            responseToSpeak,
+            settings.voice || 'hi-IN-SwaraNeural'
+          );
+        } catch (ttsErr) {
+          console.warn('[Main TTS Error]:', ttsErr.message);
+        }
       }
 
       broadcastState('idle');
+
       return {
         success: true,
         spokenResponse: responseToSpeak,
@@ -461,7 +483,8 @@ app.whenReady().then(() => {
       return {
         success: false,
         error: err.message,
-        spokenResponse: spokenError
+        spokenResponse: spokenError,
+        audioBase64: null
       };
     }
   });
