@@ -5,7 +5,7 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION LIBRARIES
+// 1. LOCAL SCREEN OCR & NATIVE AUTOMATION DRIVERS
 // ============================================================================
 let screenshot = null;
 try {
@@ -65,7 +65,56 @@ function getDocumentsDir() {
 let currentActiveProjectFile = null;
 
 // ============================================================================
-// 3. ACCURATE LOCAL OCR & SCREEN TEXT EXTRACTION
+// 3. REAL DESKTOP APP LAUNCHING ENGINE
+// ============================================================================
+
+/**
+ * Natively executes and opens Windows applications (Notepad, Calc, Chrome, etc.)
+ */
+async function launchApp(appName, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const raw = (appName || '').trim().toLowerCase();
+    logCallback('automation', `[App Launcher] Request to open application: "${raw}"`);
+
+    let binary = '';
+    if (raw.includes('notepad') || raw.includes('نوٹ پیڈ')) {
+      binary = 'notepad.exe';
+    } else if (raw.includes('calc') || raw.includes('calculator') || raw.includes('کیلکولیٹر')) {
+      binary = 'calc.exe';
+    } else if (raw.includes('chrome') || raw.includes('کروم')) {
+      binary = 'start chrome';
+    } else if (raw.includes('edge')) {
+      binary = 'start msedge';
+    } else if (raw.includes('explorer') || raw.includes('files') || raw.includes('folder')) {
+      binary = 'explorer.exe';
+    } else if (raw.includes('cmd') || raw.includes('terminal') || raw.includes('command')) {
+      binary = 'start cmd.exe';
+    } else if (raw.includes('taskmgr') || raw.includes('task manager')) {
+      binary = 'taskmgr.exe';
+    } else if (raw.includes('paint') || raw.includes('mspaint')) {
+      binary = 'mspaint.exe';
+    } else if (raw.includes('code') || raw.includes('vscode')) {
+      binary = 'code';
+    } else {
+      binary = `start "" "${raw}"`;
+    }
+
+    const command = binary.startsWith('start') ? binary : `start "" "${binary}"`;
+
+    exec(command, (err) => {
+      if (err) {
+        logCallback('error', `[App Launcher Failed] Could not launch "${raw}": ${err.message}`);
+        resolve({ success: false, error: err.message, appName: raw });
+      } else {
+        logCallback('automation', `[App Launcher] Application "${raw}" opened successfully.`);
+        resolve({ success: true, appName: raw, command });
+      }
+    });
+  });
+}
+
+// ============================================================================
+// 4. ACCURATE LOCAL OCR & SCREEN TEXT EXTRACTION
 // ============================================================================
 
 async function readEntireScreenOCR(logCallback = () => {}) {
@@ -168,7 +217,7 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
 }
 
 // ============================================================================
-// 4. MOUSE MOVEMENT & KEYBOARD AUTOMATION
+// 5. MOUSE MOVEMENT & KEYBOARD AUTOMATION
 // ============================================================================
 
 async function clickAt(x, y, button = 'left', logCallback = () => {}) {
@@ -387,7 +436,7 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
 }
 
 // ============================================================================
-// 5. YOUTUBE API v3 & GOOGLE VERIFICATION
+// 6. YOUTUBE API v3 & GOOGLE VERIFICATION
 // ============================================================================
 
 async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browserName = 'chrome') {
@@ -408,7 +457,9 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
 
     const request = https.get(apiUrl, (res) => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
@@ -474,7 +525,9 @@ async function verifyYouTubeVideoOrChannel(query, logCallback = () => {}) {
 
     https.get(apiUrl, (res) => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
@@ -506,7 +559,9 @@ async function verifyWebFacts(query, logCallback = () => {}) {
 
     https.get(apiUrl, (res) => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
@@ -539,7 +594,7 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
 }
 
 // ============================================================================
-// 6. FILE SYSTEM HANDLER & NOTEPAD STREAMING
+// 7. FILE SYSTEM HANDLER & NOTEPAD STREAMING
 // ============================================================================
 
 async function createDesktopFile(fileName, fileContent, targetDirectory = null, logCallback = () => {}) {
@@ -655,7 +710,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
 }
 
 // ============================================================================
-// 7. MASTER ACTION DISPATCHER
+// 8. MASTER ACTION DISPATCHER
 // ============================================================================
 
 async function executeAction(actionObj, logCallback = () => {}, mainWindow = null) {
@@ -663,6 +718,10 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
   logCallback('system', `Dispatching Action: [${type}]`);
 
   switch (type) {
+    case 'OPEN_APP':
+    case 'LAUNCH_APP':
+      return await launchApp(payload.name || payload.appName || payload.app, logCallback);
+
     case 'CLICK_SCREEN_TEXT':
     case 'CLICK_TEXT':
     case 'CLICK_ON_TEXT':
@@ -726,14 +785,6 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
     case 'OPEN_BROWSER':
       return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
 
-    case 'OPEN_APP':
-      return new Promise((resolve) => {
-        exec(`start ${payload.name}`, (err) => {
-          logCallback('automation', `[App Launcher] Started: "${payload.name}"`);
-          resolve({ success: !err });
-        });
-      });
-
     case 'RUN_COMMAND':
       return new Promise((resolve) => {
         exec(payload.cmd, (err, stdout, stderr) => {
@@ -757,6 +808,7 @@ module.exports = {
   YOUTUBE_DATA_API_KEY,
   GOOGLE_CUSTOM_SEARCH_API_KEY,
   GOOGLE_SEARCH_ENGINE_CX,
+  launchApp,
   readEntireScreenOCR,
   captureAndFindText,
   clickOnScreenText,
