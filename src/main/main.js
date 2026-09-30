@@ -3,13 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-let si = null;
-try {
-  si = require('systeminformation');
-} catch (e) {
-  console.warn('[Hardware] systeminformation module not found, using OS fallback.');
-}
-
 try {
   app.disableHardwareAcceleration();
 } catch (_) {}
@@ -49,28 +42,74 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 
 let mainWindow = null;
 
-const DEFAULT_SETTINGS = {
-  provider: 'gemini',
-  geminiKey: '',
-  geminiModel: 'gemini-2.5-flash',
-  openrouterKey: '',
-  openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
-  customBaseURL: 'https://api.groq.com/openai/v1',
-  customKey: '',
-  customModel: 'llama-3.3-70b-versatile',
-  voice: 'hi-IN-SwaraNeural',
-  recognitionLang: 'ur-PK',
-  autoSpeak: true,
-  autoVision: true,
-  autoFailover: true
-};
-
-function getSettingsPath() {
+// ============================================================================
+// 🧠 SMRITI: PERSISTENT LOCAL MEMORY STORAGE (userData/nova_memory.json)
+// ============================================================================
+function getMemoryFilePath() {
   const userDir = app.getPath('userData');
   if (!fs.existsSync(userDir)) {
     fs.mkdirSync(userDir, { recursive: true });
   }
-  return path.join(userDir, 'nova_persistent_config.json');
+  return path.join(userDir, 'nova_memory.json');
+}
+
+function loadLocalPersistentMemory() {
+  try {
+    const memFile = getMemoryFilePath();
+    if (!fs.existsSync(memFile)) {
+      fs.writeFileSync(memFile, JSON.stringify([], null, 2), 'utf-8');
+      return [];
+    }
+    const data = JSON.parse(fs.readFileSync(memFile, 'utf-8'));
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn('[Smriti Memory] Load error, resetting:', e.message);
+    return [];
+  }
+}
+
+function saveLocalPersistentMemory(history) {
+  try {
+    const memFile = getMemoryFilePath();
+    const sanitized = Array.isArray(history) ? history.slice(-30) : [];
+    fs.writeFileSync(memFile, JSON.stringify(sanitized, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    console.error('[Smriti Memory] Save error:', e.message);
+    return false;
+  }
+}
+
+function clearLocalPersistentMemory() {
+  try {
+    const memFile = getMemoryFilePath();
+    fs.writeFileSync(memFile, JSON.stringify([], null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// In-Memory Persistent Context Cache
+let globalSmritiContext = loadLocalPersistentMemory();
+
+// ============================================================================
+// CONFIG SETTINGS
+// ============================================================================
+const DEFAULT_SETTINGS = {
+  provider: 'gemini',
+  geminiKey: '',
+  geminiModel: 'gemini-2.0-flash',
+  openrouterKey: '',
+  openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
+  voice: 'hi-IN-SwaraNeural',
+  autoSpeak: true,
+  autoVision: true,
+  isRoastModeEnabled: false
+};
+
+function getSettingsPath() {
+  return path.join(app.getPath('userData'), 'nova_persistent_config.json');
 }
 
 function readSettings() {
@@ -93,7 +132,6 @@ function writeSettings(newConfig) {
     fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf-8');
     return { success: true };
   } catch (err) {
-    logEmergencyCrash('Settings Write Warning', err);
     return { success: false, error: err.message };
   }
 }
@@ -114,93 +152,7 @@ function broadcastState(state) {
   }
 }
 
-async function fetchFullHardwareStats() {
-  try {
-    if (si) {
-      const [battery, load, mem, temp] = await Promise.all([
-        si.battery().catch(() => ({ hasBattery: false })),
-        si.currentLoad().catch(() => ({ currentLoad: 0 })),
-        si.mem().catch(() => ({ total: 0, available: 0, used: 0 })),
-        si.cpuTemperature().catch(() => ({ main: 0 }))
-      ]);
-
-      const totalMemGb = (mem.total / (1024 ** 3)).toFixed(1);
-      const usedMemGb = ((mem.total - mem.available) / (1024 ** 3)).toFixed(1);
-      const ramPercent = mem.total ? Math.round(((mem.total - mem.available) / mem.total) * 100) : 0;
-
-      return {
-        battery: {
-          hasBattery: battery.hasBattery,
-          percent: battery.percent || 0,
-          isCharging: battery.isCharging || false,
-          acConnected: battery.acConnected || false
-        },
-        cpu: {
-          loadPercent: Math.round(load.currentLoad || 0),
-          tempC: temp.main || 0,
-          cores: os.cpus().length,
-          model: os.cpus()[0]?.model || 'Generic CPU'
-        },
-        ram: {
-          totalGb: totalMemGb,
-          usedGb: usedMemGb,
-          usedPercent: ramPercent
-        }
-      };
-    }
-  } catch (e) {
-    console.warn('[Hardware] Error reading stats:', e.message);
-  }
-
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
-  return {
-    battery: { hasBattery: false, percent: 100, isCharging: true, acConnected: true },
-    cpu: { loadPercent: 25, tempC: 45, cores: os.cpus().length, model: os.cpus()[0]?.model || 'Generic' },
-    ram: {
-      totalGb: (totalMem / (1024 ** 3)).toFixed(1),
-      usedGb: (usedMem / (1024 ** 3)).toFixed(1),
-      usedPercent: Math.round((usedMem / totalMem) * 100)
-    }
-  };
-}
-
-function resolvePreloadPath() {
-  const candidates = [
-    path.join(__dirname, '../preload.js'),
-    path.join(__dirname, 'preload.js'),
-    path.join(app.getAppPath(), 'src', 'preload.js'),
-    path.join(app.getAppPath(), 'preload.js'),
-    path.resolve(__dirname, '..', 'preload.js')
-  ];
-  for (const c of candidates) {
-    try {
-      if (fs.existsSync(c)) return c;
-    } catch (_) {}
-  }
-  return path.join(__dirname, '../preload.js');
-}
-
-function resolveIndexPath() {
-  const candidates = [
-    path.join(__dirname, '../../dist/index.html'),
-    path.join(__dirname, '../dist/index.html'),
-    path.join(app.getAppPath(), 'dist', 'index.html'),
-    path.join(process.cwd(), 'dist', 'index.html'),
-    path.join(process.resourcesPath, 'app.asar', 'dist', 'index.html')
-  ];
-  for (const c of candidates) {
-    try {
-      if (fs.existsSync(c)) return c;
-    } catch (_) {}
-  }
-  return null;
-}
-
 function createWindow() {
-  const preloadResolved = resolvePreloadPath();
-
   mainWindow = new BrowserWindow({
     title: 'NOVA AI',
     width: 1340,
@@ -212,7 +164,7 @@ function createWindow() {
     frame: true,
     autoHideMenuBar: true,
     webPreferences: {
-      preload: preloadResolved,
+      preload: path.join(__dirname, '../preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
@@ -222,15 +174,13 @@ function createWindow() {
 
   const isDev = !app.isPackaged && process.argv.includes('--dev');
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173').catch(() => loadProductionBuild(mainWindow));
+    mainWindow.loadURL('http://localhost:5173');
   } else {
-    loadProductionBuild(mainWindow);
+    mainWindow.loadFile(path.join(__dirname, '../../dist/index.html'));
   }
 
   mainWindow.on('close', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('nova:systemShutdown');
-    }
+    saveLocalPersistentMemory(globalSmritiContext);
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
     }
@@ -242,33 +192,24 @@ function createWindow() {
   });
 }
 
-function loadProductionBuild(targetWindow) {
-  const resolvedHtml = resolveIndexPath();
-  if (resolvedHtml) {
-    targetWindow.loadFile(resolvedHtml).catch((err) => {
-      dialog.showErrorBox('NOVA AI Load Fault', `Error: ${err.message}`);
-    });
-  } else {
-    const fallbackHTML = `
-      <!DOCTYPE html><html><body style="background:#07080c;color:#ff7700;font-family:sans-serif;padding:40px;">
-      <h2>NOVA AI - Assets Not Found</h2>
-      <p>Ensure <code>npm run build:renderer</code> ran prior to packaging.</p></body></html>
-    `;
-    targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fallbackHTML)}`);
-  }
-}
-
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, callback) => callback(true));
   session.defaultSession.setPermissionCheckHandler(() => true);
 
   createWindow();
 
+  // IPC Handlers for Settings & Smriti Memory
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
-  ipcMain.handle('nova:getHardwareStats', async () => {
-    return await fetchFullHardwareStats();
+  ipcMain.handle('nova:loadMemory', () => {
+    globalSmritiContext = loadLocalPersistentMemory();
+    return globalSmritiContext;
+  });
+
+  ipcMain.handle('nova:clearMemory', () => {
+    globalSmritiContext = [];
+    return clearLocalPersistentMemory();
   });
 
   ipcMain.handle('nova:stopSpeech', () => {
@@ -278,39 +219,7 @@ app.whenReady().then(() => {
     return { success: true };
   });
 
-  ipcMain.handle('nova:speak', async (_, { text, voice }) => {
-    try {
-      if (!ttsEngine || !ttsEngine.synthesizeNeuralSpeech) return { success: false };
-      const settings = readSettings();
-      const selectedVoice = voice || settings.voice || 'hi-IN-SwaraNeural';
-      const base64Audio = await ttsEngine.synthesizeNeuralSpeech(text, selectedVoice);
-      return { success: true, base64Audio };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  });
-
-  ipcMain.handle('nova:captureScreen', async () => {
-    try {
-      if (!vision || !vision.captureActiveDisplay) return { success: false, error: 'Vision unavailable' };
-      const screenshotBase64 = await vision.captureActiveDisplay();
-      return { success: true, imageBase64: screenshotBase64 };
-    } catch (e) {
-      return { success: false, error: e.message };
-    }
-  });
-
-  ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir, isUpdate }) => {
-    if (!automation || !automation.liveNotepadCodeStream) return { success: false };
-    return await automation.liveNotepadCodeStream(filename, content, targetDir, isUpdate, broadcastLog, mainWindow);
-  });
-
-  ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
-    if (!automation || !automation.openBrowserTarget) return { success: false };
-    return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
-  });
-
-  // Dedicated AI Command Router
+  // Main Command Orchestration
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
@@ -326,37 +235,38 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      // Check if user explicitly asked for hardware statistics before fetching
-      const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(text || '');
-      const hardwareStats = isExplicitHardwareQuery ? await fetchFullHardwareStats() : null;
+      // Merge persistent memory with active session history
+      const historyContext = (conversationHistory && conversationHistory.length > 0)
+        ? conversationHistory
+        : globalSmritiContext;
 
-      if (text) broadcastLog('command', `User Directive: "${text}"`);
+      if (text) broadcastLog('command', `Directive: "${text}"`);
 
-      if (!aiEngine || !aiEngine.runAIInferenceStream) {
-        throw new Error('AI Engine subsystem offline.');
-      }
-
+      // Grounded 2-Pass Execution: Action executes FIRST, real outcome determines response
       const aiResponse = await aiEngine.runAIInferenceStream(
         text,
         audioBase64,
         visionData,
         settings,
-        conversationHistory || [],
-        hardwareStats, // Passed ONLY if requested; otherwise null
+        historyContext,
+        null,
         (streamChunk) => {
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
           }
-        }
+        },
+        broadcastLog,
+        mainWindow
       );
 
-      if (aiResponse.actions && Array.isArray(aiResponse.actions) && automation && automation.executeAction) {
-        for (const action of aiResponse.actions) {
-          broadcastState('executing');
-          await automation.executeAction(action, broadcastLog, mainWindow);
-        }
+      // Update and save persistent Smriti history
+      if (aiResponse.spokenResponse) {
+        globalSmritiContext.push({ role: 'user', text: text || '[Voice Directive]' });
+        globalSmritiContext.push({ role: 'model', text: aiResponse.spokenResponse });
+        saveLocalPersistentMemory(globalSmritiContext);
       }
 
+      // Synthesize natural Edge Neural Voice
       let audioResult = null;
       const responseToSpeak = (aiResponse.spokenResponse || '').trim();
 
@@ -372,39 +282,24 @@ app.whenReady().then(() => {
         success: true,
         spokenResponse: responseToSpeak,
         actions: aiResponse.actions || [],
-        audioBase64: audioResult
+        audioBase64: audioResult,
+        updatedMemory: globalSmritiContext
       };
     } catch (err) {
       broadcastState('idle');
-      const spokenError = `Notice: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
+      const spokenError = `Haye tauba! Ek masla aa gaya hai: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
       broadcastLog('error', err.message);
-
-      let errorAudio = null;
-      if (ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
-        try {
-          errorAudio = await ttsEngine.synthesizeNeuralSpeech(spokenError, settings.voice || 'hi-IN-SwaraNeural');
-        } catch (_) {}
-      }
 
       return {
         success: false,
         error: err.message,
-        spokenResponse: spokenError,
-        audioBase64: errorAudio
+        spokenResponse: spokenError
       };
     }
   });
 });
 
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized() || !mainWindow.isVisible()) {
-      mainWindow.show();
-    }
-    mainWindow.focus();
-  }
-});
-
 app.on('window-all-closed', () => {
+  saveLocalPersistentMemory(globalSmritiContext);
   app.quit();
 });
