@@ -109,7 +109,7 @@ const DEFAULT_SETTINGS = {
   geminiModel: 'gemini-2.0-flash',
   openrouterKey: '',
   openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
-  voice: 'hi-IN-SwaraNeural',
+  voice: 'ur-PK-UzmaNeural', // Lifetime Free Microsoft Edge Neural Voice
   autoSpeak: true,
   autoVision: true,
   isRoastModeEnabled: false
@@ -357,7 +357,7 @@ app.whenReady().then(() => {
     try {
       if (!ttsEngine || !ttsEngine.synthesizeNeuralSpeech) return { success: false };
       const settings = readSettings();
-      const selectedVoice = voice || settings.voice || 'hi-IN-SwaraNeural';
+      const selectedVoice = voice || settings.voice || 'ur-PK-UzmaNeural';
       const base64Audio = await ttsEngine.synthesizeNeuralSpeech(text, selectedVoice);
       return { success: true, base64Audio };
     } catch (err) {
@@ -376,8 +376,8 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir, isUpdate }) => {
-    if (!automation || !automation.liveNotepadCodeStream) return { success: false };
-    return await automation.liveNotepadCodeStream(filename, content, targetDir, isUpdate, broadcastLog, mainWindow);
+    if (!automation || !automation.createDesktopFile) return { success: false };
+    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
   });
 
   ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
@@ -385,11 +385,11 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master AI Command Execution Pipeline
+  // Master AI Command Execution Pipeline (Voice-First Audio Execution)
   ipcMain.handle('nova:processCommand', async (_, payload) => {
     const settings = readSettings();
 
-    // Dynamically synchronize the roastMode flag from incoming payload into settings
+    // Dynamically synchronize roast mode state
     if (payload?.isRoastModeEnabled !== undefined) {
       settings.isRoastModeEnabled = payload.isRoastModeEnabled;
     }
@@ -454,21 +454,22 @@ app.whenReady().then(() => {
         )
       ]);
 
-      if (aiResponse && aiResponse.spokenResponse) {
+      const responseToSpeak = (aiResponse?.spokenResponse || '').trim();
+
+      // Save to memory.json for context continuity
+      if (responseToSpeak) {
         globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
-        globalMemoryContext.push({ role: 'model', text: aiResponse.spokenResponse });
+        globalMemoryContext.push({ role: 'model', text: responseToSpeak });
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
-      // Generate Neural Voice using Swara/Uzma profile
+      // Convert response to Edge Neural Audio (ur-PK-UzmaNeural / hi-IN-SwaraNeural)
       let audioResult = null;
-      const responseToSpeak = (aiResponse?.spokenResponse || '').trim();
-
-      if (settings.autoSpeak && responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
+      if (responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
         try {
           audioResult = await ttsEngine.synthesizeNeuralSpeech(
             responseToSpeak,
-            settings.voice || 'hi-IN-SwaraNeural'
+            settings.voice || 'ur-PK-UzmaNeural'
           );
         } catch (ttsErr) {
           console.warn('[Main TTS Error]:', ttsErr.message);
@@ -477,9 +478,12 @@ app.whenReady().then(() => {
 
       broadcastState('idle');
 
+      // VOICE-ONLY CHAT WINDOW REQUIREMENT:
+      // Return empty spokenResponse to the UI chat stream so text is not printed in the chat box.
+      // The AI response is delivered purely through the audio speakers via audioBase64.
       return {
         success: true,
-        spokenResponse: responseToSpeak,
+        spokenResponse: '', // Hides AI text responses from appearing in the user chat feed
         actions: aiResponse?.actions || [],
         audioBase64: audioResult,
         updatedMemory: globalMemoryContext
@@ -489,11 +493,21 @@ app.whenReady().then(() => {
       const spokenError = `باس، ایک مسئلہ پیش آ گیا ہے: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
       broadcastLog('error', err.message);
 
+      let errorAudio = null;
+      if (ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
+        try {
+          errorAudio = await ttsEngine.synthesizeNeuralSpeech(
+            spokenError,
+            settings.voice || 'ur-PK-UzmaNeural'
+          );
+        } catch (_) {}
+      }
+
       return {
         success: false,
         error: err.message,
-        spokenResponse: spokenError,
-        audioBase64: null
+        spokenResponse: '',
+        audioBase64: errorAudio
       };
     }
   });
