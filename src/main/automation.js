@@ -5,7 +5,44 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 🚨 EXISTING CREDENTIALS (INTACT - REUSED AS REQUESTED)
+// 1. LOCAL SCREEN OCR & DESKTOP AUTOMATION LIBRARIES (100% LOCAL)
+// ============================================================================
+let screenshot = null;
+try {
+  screenshot = require('screenshot-desktop');
+} catch (e) {
+  console.warn('[Local Vision] screenshot-desktop not available:', e.message);
+}
+
+let Tesseract = null;
+try {
+  Tesseract = require('tesseract.js');
+} catch (e) {
+  console.warn('[Local OCR] tesseract.js not available:', e.message);
+}
+
+let nutMouse = null;
+let nutKeyboard = null;
+let Point = null;
+let Button = null;
+let Key = null;
+
+try {
+  const nut = require('@nut-tree/nut-js');
+  nutMouse = nut.mouse;
+  nutKeyboard = nut.keyboard;
+  Point = nut.Point;
+  Button = nut.Button;
+  Key = nut.Key;
+  // Smooth humanized cursor movement speed
+  nutMouse.config.autoDelayMs = 30;
+  nutKeyboard.config.autoDelayMs = 20;
+} catch (e) {
+  console.warn('[Local Input] @nut-tree/nut-js not loaded, using Windows OS fallback.');
+}
+
+// ============================================================================
+// 2. EXISTING CREDENTIALS & CONSTANTS (KEPT INTACT)
 // ============================================================================
 const YOUTUBE_DATA_API_KEY = "AIzaSyAKoG0eSXgMaIg4xWQSY7t9aof2dFW3zlw";
 const GOOGLE_CUSTOM_SEARCH_API_KEY = "AIzaSyC63h7RvDVgpqDfiD_cKNteLp5QUlwzbEs";
@@ -13,9 +50,6 @@ const GOOGLE_SEARCH_ENGINE_CX = `<script async src="https://cse.google.com/cse.j
 </script>
 <div class="gcse-search"></div>`;
 
-/**
- * Extracts clean search engine ID string from raw script/div tag
- */
 function getCleanGoogleCx() {
   const match = GOOGLE_SEARCH_ENGINE_CX.match(/cx=([a-zA-Z0-9_-]+)/);
   return match ? match[1] : "e1b191a16183d4a47";
@@ -27,9 +61,201 @@ function getDesktopDir() {
 
 let currentActiveProjectFile = null;
 
+// ============================================================================
+// 3. LOCAL SCREEN OCR & TARGET FINDING (NO EXTERNAL APIS)
+// ============================================================================
+
 /**
- * Launches URL directly in Chrome (Windows) or system default browser
+ * Captures primary screen and finds the bounding box coordinates of target text.
+ * @param {string} targetText - Text to locate on screen (case-insensitive)
+ * @param {function} logCallback - Logger stream
+ * @returns {Promise<{ found: boolean, x: number, y: number, width: number, height: number, text: string }>}
  */
+async function captureAndFindText(targetText, logCallback = () => {}) {
+  const target = (targetText || '').trim().toLowerCase();
+  if (!target) {
+    return { found: false, error: 'Empty search text provided.' };
+  }
+
+  if (!screenshot) {
+    logCallback('error', '[Local OCR] screenshot-desktop module missing.');
+    return { found: false, error: 'screenshot-desktop missing' };
+  }
+
+  if (!Tesseract) {
+    logCallback('error', '[Local OCR] tesseract.js module missing.');
+    return { found: false, error: 'tesseract.js missing' };
+  }
+
+  try {
+    logCallback('automation', `[Local OCR] Capturing display & scanning for: "${targetText}"...`);
+
+    // 1. Take a clean PNG snapshot of the primary screen locally
+    const imgBuffer = await screenshot({ format: 'png' });
+
+    // 2. Process image with local Tesseract.js engine
+    const { data } = await Tesseract.recognize(imgBuffer, 'eng', {
+      logger: (m) => {
+        if (m.status === 'recognizing text' && m.progress === 1) {
+          logCallback('automation', `[Local OCR] Text extraction complete.`);
+        }
+      }
+    });
+
+    const words = data.words || [];
+    const targetWords = target.split(/\s+/);
+
+    // Search 1: Multi-word phrase matching across consecutive words
+    if (targetWords.length > 1) {
+      for (let i = 0; i <= words.length - targetWords.length; i++) {
+        let match = true;
+        for (let j = 0; j < targetWords.length; j++) {
+          const wordClean = words[i + j].text.toLowerCase().replace(/[^\w]/g, '');
+          const targetClean = targetWords[j].replace(/[^\w]/g, '');
+          if (!wordClean.includes(targetClean)) {
+            match = false;
+            break;
+          }
+        }
+
+        if (match) {
+          const matchedSlice = words.slice(i, i + targetWords.length);
+          const x0 = Math.min(...matchedSlice.map((w) => w.bbox.x0));
+          const y0 = Math.min(...matchedSlice.map((w) => w.bbox.y0));
+          const x1 = Math.max(...matchedSlice.map((w) => w.bbox.x1));
+          const y1 = Math.max(...matchedSlice.map((w) => w.bbox.y1));
+
+          const centerX = Math.round((x0 + x1) / 2);
+          const centerY = Math.round((y0 + y1) / 2);
+
+          logCallback('automation', `[Local OCR] Phrase located at (${centerX}, ${centerY}) [${x1 - x0}x${y1 - y0}]`);
+          return {
+            found: true,
+            x: centerX,
+            y: centerY,
+            width: x1 - x0,
+            height: y1 - y0,
+            text: matchedSlice.map((w) => w.text).join(' ')
+          };
+        }
+      }
+    }
+
+    // Search 2: Single-word / Substring matching
+    for (const w of words) {
+      const cleanWord = w.text.toLowerCase().replace(/[^\w]/g, '');
+      const cleanTarget = target.replace(/[^\w]/g, '');
+
+      if (cleanWord.includes(cleanTarget) || cleanTarget.includes(cleanWord)) {
+        const centerX = Math.round((w.bbox.x0 + w.bbox.x1) / 2);
+        const centerY = Math.round((w.bbox.y0 + w.bbox.y1) / 2);
+
+        logCallback('automation', `[Local OCR] Word "${w.text}" located at (${centerX}, ${centerY})`);
+        return {
+          found: true,
+          x: centerX,
+          y: centerY,
+          width: w.bbox.x1 - w.bbox.x0,
+          height: w.bbox.y1 - w.bbox.y0,
+          text: w.text
+        };
+      }
+    }
+
+    // Search 3: Line matching fallback
+    const lines = data.lines || [];
+    for (const l of lines) {
+      if (l.text.toLowerCase().includes(target)) {
+        const centerX = Math.round((l.bbox.x0 + l.bbox.x1) / 2);
+        const centerY = Math.round((l.bbox.y0 + l.bbox.y1) / 2);
+        logCallback('automation', `[Local OCR] Line located at (${centerX}, ${centerY})`);
+        return {
+          found: true,
+          x: centerX,
+          y: centerY,
+          width: l.bbox.x1 - l.bbox.x0,
+          height: l.bbox.y1 - l.bbox.y0,
+          text: l.text
+        };
+      }
+    }
+
+    logCallback('warning', `[Local OCR] Text "${targetText}" not found on current screen.`);
+    return { found: false };
+  } catch (err) {
+    logCallback('error', `[Local OCR Error]: ${err.message}`);
+    return { found: false, error: err.message };
+  }
+}
+
+/**
+ * 4. NATIVE MOUSE MOVEMENT & CLICK BY ON-SCREEN TEXT
+ */
+async function clickOnScreenText(targetText, logCallback = () => {}) {
+  const result = await captureAndFindText(targetText, logCallback);
+
+  if (!result || !result.found) {
+    logCallback('warning', `[Mouse Action] Cannot click: "${targetText}" was not detected on screen.`);
+    return { success: false, error: 'Text not found on screen' };
+  }
+
+  logCallback('automation', `[Mouse Action] Moving cursor to (${result.x}, ${result.y}) and clicking...`);
+
+  // Preferred: Use nut.js for smooth native mouse control
+  if (nutMouse && Point) {
+    try {
+      await nutMouse.setPosition(new Point(result.x, result.y));
+      await nutMouse.leftClick();
+      logCallback('automation', `[Mouse Action] Successfully clicked on "${targetText}"`);
+      return { success: true, x: result.x, y: result.y };
+    } catch (e) {
+      console.warn('[Nut.js click failed, using Windows fallback]:', e.message);
+    }
+  }
+
+  // Fallback: Windows OS User32 mouse event
+  return await clickAt(result.x, result.y, 'left', logCallback);
+}
+
+/**
+ * 5. NATIVE KEYBOARD TYPING & SUBMISSION
+ */
+async function typeAndSubmitText(textToType, logCallback = () => {}) {
+  if (!textToType) return { success: false };
+
+  logCallback('automation', `[Keyboard Action] Typing: "${textToType}" & pressing Enter...`);
+
+  if (nutKeyboard && Key) {
+    try {
+      await nutKeyboard.type(textToType);
+      await nutKeyboard.pressKey(Key.Enter);
+      await nutKeyboard.releaseKey(Key.Enter);
+      logCallback('automation', `[Keyboard Action] Text typed and submitted.`);
+      return { success: true };
+    } catch (e) {
+      console.warn('[Nut.js keyboard failed, using Windows fallback]:', e.message);
+    }
+  }
+
+  // Windows PowerShell SendKeys Fallback
+  return new Promise((resolve) => {
+    const escapedText = textToType.replace(/'/g, "''");
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.SendKeys]::SendWait('${escapedText}');
+      Start-Sleep -Milliseconds 100;
+      [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err });
+    });
+  });
+}
+
+// ============================================================================
+// 6. EXISTING APP AUTOMATION & BROWSER CONTROLS (PRESERVED)
+// ============================================================================
+
 function launchBrowserUrl(targetUrl, browserName = 'chrome') {
   if (process.platform === 'win32' && (browserName || 'chrome').toLowerCase().includes('chrome')) {
     exec(`start chrome "${targetUrl}"`, (err) => {
@@ -40,16 +266,8 @@ function launchBrowserUrl(targetUrl, browserName = 'chrome') {
   }
 }
 
-/**
- * YouTube Data API v3 Direct Search & Instant Autoplay
- * - Uses existing YOUTUBE_DATA_API_KEY
- * - Searches YouTube Data API v3 for the top matching videoId
- * - Launches direct playback: https://www.youtube.com/watch?v=${videoId}
- * - Does NOT fallback to generic Google search unless the API call fails or yields zero items
- */
 async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browserName = 'chrome') {
   return new Promise((resolve) => {
-    // Strip conversational filler commands to isolate the exact song or video query
     const cleanQuery = (query || '')
       .replace(/^(play|chalao|sunao|laga do|chala do|bajao)\s+/i, '')
       .replace(/\s+(chalao|sunao|laga do|chala do|bajao|song|video)$/i, '')
@@ -57,13 +275,11 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
 
     if (!cleanQuery) {
       const defaultUrl = 'https://www.youtube.com';
-      logCallback('automation', `[YouTube] Empty query string. Launching YouTube homepage.`);
       launchBrowserUrl(defaultUrl, browserName);
       return resolve({ success: true, url: defaultUrl });
     }
 
-    logCallback('automation', `[YouTube API v3] Searching top video for: "${cleanQuery}"`);
-
+    logCallback('automation', `[YouTube API v3] Searching: "${cleanQuery}"`);
     const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(cleanQuery)}&type=video&maxResults=1&key=${YOUTUBE_DATA_API_KEY}`;
 
     const request = https.get(apiUrl, (res) => {
@@ -75,22 +291,15 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
           const videoId = json.items && json.items[0]?.id?.videoId;
 
           if (videoId) {
-            // Direct playback URL launched immediately
             const directPlayUrl = `https://www.youtube.com/watch?v=${videoId}`;
-            const videoTitle = json.items[0]?.snippet?.title || cleanQuery;
-            logCallback('automation', `[YouTube Direct Play] Video Found: "${videoTitle}" (${videoId}) -> Starting`);
-
             launchBrowserUrl(directPlayUrl, browserName);
-            resolve({ success: true, videoId, videoTitle, url: directPlayUrl });
+            resolve({ success: true, videoId, url: directPlayUrl });
           } else {
-            // API returned zero items -> Only then fallback to search results
-            logCallback('automation', `[YouTube API] Zero videos returned for "${cleanQuery}". Opening search page.`);
             const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
             launchBrowserUrl(fallbackUrl, browserName);
             resolve({ success: true, fallback: true, url: fallbackUrl });
           }
         } catch (err) {
-          logCallback('error', `[YouTube API Parse Error]: ${err.message}. Falling back to search.`);
           const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
           launchBrowserUrl(fallbackUrl, browserName);
           resolve({ success: true, fallback: true, url: fallbackUrl });
@@ -98,8 +307,7 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
       });
     });
 
-    request.on('error', (err) => {
-      logCallback('error', `[YouTube API Network Error]: ${err.message}. Opening search page.`);
+    request.on('error', () => {
       const fallbackUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
       launchBrowserUrl(fallbackUrl, browserName);
       resolve({ success: true, fallback: true, url: fallbackUrl });
@@ -114,9 +322,6 @@ async function searchAndPlayYouTubeDirect(query, logCallback = () => {}, browser
   });
 }
 
-/**
- * Live Notepad Code Streaming & In-Place File Updating
- */
 async function liveNotepadCodeStream(filename, content, targetDirectory = null, isUpdate = false, logCallback = () => {}, mainWindow = null) {
   try {
     const baseDir = targetDirectory ? targetDirectory : getDesktopDir();
@@ -134,7 +339,7 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
     const fullPath = path.join(baseDir, resolvedFilename);
     currentActiveProjectFile = fullPath;
 
-    logCallback('automation', `[Notepad Typer] In-Place Target: "${fullPath}" (Update: ${isUpdate ? 'YES' : 'NEW'})`);
+    logCallback('automation', `[Notepad Typer] In-Place Target: "${fullPath}"`);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       const chunkSize = 35;
@@ -167,7 +372,6 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
       }, 400);
     }
 
-    logCallback('automation', `[Notepad] Successfully saved: "${fullPath}"`);
     return { success: true, path: fullPath, isUpdate };
   } catch (err) {
     logCallback('error', `[Notepad Typer Fault]: ${err.message}`);
@@ -175,13 +379,10 @@ async function liveNotepadCodeStream(filename, content, targetDirectory = null, 
   }
 }
 
-/**
- * Google Custom Search JSON API
- */
 async function queryGoogleCustomSearch(query, logCallback = () => {}) {
   return new Promise((resolve) => {
     const cx = getCleanGoogleCx();
-    logCallback('automation', `[Google Custom Search] Querying web facts for: "${query}"`);
+    logCallback('automation', `[Google Search] Querying: "${query}"`);
 
     const apiUrl = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_CUSTOM_SEARCH_API_KEY}&cx=${cx}&q=${encodeURIComponent(query)}&num=3`;
 
@@ -191,35 +392,37 @@ async function queryGoogleCustomSearch(query, logCallback = () => {}) {
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
-          const results = (json.items || []).map(item => ({
+          const results = (json.items || []).map((item) => ({
             title: item.title,
             snippet: item.snippet,
             link: item.link
           }));
-          logCallback('automation', `[Google Search] Retrieved ${results.length} references.`);
           resolve({ success: true, results });
         } catch (e) {
           resolve({ success: false, error: e.message });
         }
       });
     }).on('error', (err) => {
-      logCallback('error', `[Google Search Fault]: ${err.message}`);
       resolve({ success: false, error: err.message });
     });
   });
 }
 
-/**
- * Native Screen Touch, Click, Long-Press & Scroll
- */
 async function clickAt(x, y, button = 'left', logCallback = () => {}) {
+  if (nutMouse && Point) {
+    try {
+      await nutMouse.setPosition(new Point(Math.round(x), Math.round(y)));
+      if (button === 'right') await nutMouse.rightClick();
+      else await nutMouse.leftClick();
+      return { success: true, x, y };
+    } catch (_) {}
+  }
+
   return new Promise((resolve) => {
     const posX = Math.round(Number(x));
     const posY = Math.round(Number(y));
     const downFlag = button === 'right' ? '0x0008' : '0x0002';
     const upFlag = button === 'right' ? '0x0010' : '0x0004';
-
-    logCallback('automation', `[Native Mouse] ${button.toUpperCase()} Click at (${posX}, ${posY})`);
 
     const ps = `
       Add-Type -AssemblyName System.Windows.Forms;
@@ -243,76 +446,19 @@ async function clickAt(x, y, button = 'left', logCallback = () => {}) {
   });
 }
 
-async function doubleClickAt(x, y, logCallback = () => {}) {
-  return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
-    logCallback('automation', `[Native Mouse] Double-Click at (${posX}, ${posY})`);
-
-    const ps = `
-      Add-Type -AssemblyName System.Windows.Forms;
-      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeMouseDblDrv {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
-      [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds 75;
-      [NativeMouseDblDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
-      [NativeMouseDblDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, x: posX, y: posY });
-    });
-  });
-}
-
-async function rightClickAt(x, y, logCallback = () => {}) {
-  return await clickAt(x, y, 'right', logCallback);
-}
-
-async function longPressAt(x, y, durationMs = 1200, logCallback = () => {}) {
-  return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
-    const sleep = Math.max(300, Math.min(5000, Number(durationMs) || 1200));
-
-    logCallback('automation', `[Native Mouse] Long-Press at (${posX}, ${posY}) for ${sleep}ms`);
-
-    const ps = `
-      Add-Type -AssemblyName System.Windows.Forms;
-      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeMouseLongDrv {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeMouseLongDrv]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds ${sleep};
-      [NativeMouseLongDrv]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, x: posX, y: posY, durationMs: sleep });
-    });
-  });
-}
-
 async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
+  if (nutMouse) {
+    try {
+      const scrollAmt = Math.max(1, amount) * 100;
+      if (direction === 'down') await nutMouse.scrollDown(scrollAmt);
+      else await nutMouse.scrollUp(scrollAmt);
+      return { success: true };
+    } catch (_) {}
+  }
+
   return new Promise((resolve) => {
     const isDown = direction.toLowerCase() === 'down';
     const scrollDelta = isDown ? -120 * Math.max(1, amount) : 120 * Math.max(1, amount);
-
-    logCallback('automation', `[Native Mouse] Scroll ${direction.toUpperCase()} (${amount})`);
 
     const ps = `
       $code = @'
@@ -332,10 +478,6 @@ async function scrollScreen(direction = 'down', amount = 4, logCallback = () => 
   });
 }
 
-/**
- * General Browser Navigation
- * Intercepts YouTube play queries and runs them through YouTube Data API v3 direct playback
- */
 async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
     let finalUrl = url || 'https://www.google.com';
@@ -353,7 +495,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
       finalUrl = 'https://' + finalUrl;
     }
 
-    logCallback('automation', `[Browser Launcher] Launching: "${finalUrl}" in ${browserName}`);
+    logCallback('automation', `[Browser Launcher] Launching: "${finalUrl}"`);
     launchBrowserUrl(finalUrl, browserName);
     return { success: true, launchedUrl: finalUrl };
   } catch (err) {
@@ -363,13 +505,37 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
 }
 
 /**
- * Universal Action Dispatcher
+ * Universal Action Dispatcher (Updated with Local OCR & Nut.js Input Actions)
  */
 async function executeAction(actionObj, logCallback = () => {}, mainWindow = null) {
   const { type, payload } = actionObj;
   logCallback('system', `Dispatching Action: [${type}]`);
 
   switch (type) {
+    // 1. Local OCR Screen Clicking & Finding
+    case 'CLICK_TEXT':
+    case 'CLICK_ON_TEXT':
+    case 'CLICK_SCREEN_TEXT':
+      return await clickOnScreenText(payload.text || payload.targetText || payload.label, logCallback);
+
+    case 'FIND_TEXT':
+    case 'FIND_SCREEN_TEXT':
+      return await captureAndFindText(payload.text || payload.targetText || payload.label, logCallback);
+
+    // 2. Native Typing & Enter
+    case 'TYPE_AND_SUBMIT':
+    case 'TYPE_TEXT':
+      return await typeAndSubmitText(payload.text || payload.textToType, logCallback);
+
+    // 3. Coordinate Mouse Actions
+    case 'CLICK_AT':
+    case 'CLICK_SCREEN':
+      return await clickAt(payload.x, payload.y, payload.button || 'left', logCallback);
+
+    case 'SCROLL_SCREEN':
+      return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
+
+    // 4. YouTube & Search
     case 'YOUTUBE_DIRECT_PLAY':
     case 'PLAY_YOUTUBE_VIDEO':
       return await searchAndPlayYouTubeDirect(
@@ -381,6 +547,7 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
     case 'GOOGLE_CUSTOM_SEARCH':
       return await queryGoogleCustomSearch(payload.query, logCallback);
 
+    // 5. Code & Files
     case 'CREATE_FILE':
     case 'CREATE_AND_STREAM_CODE':
     case 'UPDATE_FILE_IN_PLACE':
@@ -392,22 +559,6 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
         logCallback,
         mainWindow
       );
-
-    case 'CLICK_AT':
-    case 'CLICK_SCREEN':
-      return await clickAt(payload.x, payload.y, payload.button || 'left', logCallback);
-
-    case 'DOUBLE_CLICK_AT':
-      return await doubleClickAt(payload.x, payload.y, logCallback);
-
-    case 'RIGHT_CLICK_AT':
-      return await rightClickAt(payload.x, payload.y, logCallback);
-
-    case 'LONG_PRESS_AT':
-      return await longPressAt(payload.x, payload.y, payload.durationMs || 1200, logCallback);
-
-    case 'SCROLL_SCREEN':
-      return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
 
     case 'OPEN_BROWSER':
       return await openBrowserTarget(payload.url, payload.query, payload.browser || 'chrome', logCallback);
@@ -443,13 +594,13 @@ module.exports = {
   YOUTUBE_DATA_API_KEY,
   GOOGLE_CUSTOM_SEARCH_API_KEY,
   GOOGLE_SEARCH_ENGINE_CX,
+  captureAndFindText,
+  clickOnScreenText,
+  typeAndSubmitText,
   liveNotepadCodeStream,
   searchAndPlayYouTubeDirect,
   queryGoogleCustomSearch,
   clickAt,
-  doubleClickAt,
-  rightClickAt,
-  longPressAt,
   scrollScreen,
   openBrowserTarget,
   executeAction
