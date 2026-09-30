@@ -42,8 +42,41 @@ function getDesktopDir() {
 let currentActiveProjectFile = null;
 
 // ============================================================================
-// 3. LOCAL SCREEN OCR & COORDINATE FINDING
+// 3. FULL DISPLAY OCR TEXT EXTRACTION (FOR DYNAMIC SCREEN READING)
 // ============================================================================
+
+/**
+ * Captures the primary display and extracts all visible text via Tesseract OCR locally.
+ * Returns clean plain text for AI context injection.
+ */
+async function readEntireScreenOCR(logCallback = () => {}) {
+  if (!screenshot) {
+    logCallback('error', '[Local OCR] screenshot-desktop module is missing.');
+    return '';
+  }
+  if (!Tesseract) {
+    logCallback('error', '[Local OCR] tesseract.js module is missing.');
+    return '';
+  }
+
+  try {
+    logCallback('automation', '[Local OCR] Capturing display & extracting on-screen text...');
+
+    // 1. In-memory PNG screenshot of active primary display
+    const imgBuffer = await screenshot({ format: 'png' });
+
+    // 2. Local Tesseract recognition
+    const { data } = await Tesseract.recognize(imgBuffer, 'eng');
+    const rawText = (data && data.text ? data.text : '').replace(/\s+/g, ' ').trim();
+
+    logCallback('automation', `[Local OCR] Extracted ${rawText.length} characters of visible screen text.`);
+    // Return up to 2500 characters of clean context to keep prompt fast and relevant
+    return rawText.slice(0, 2500);
+  } catch (err) {
+    logCallback('error', `[Local OCR Read Error]: ${err.message}`);
+    return '';
+  }
+}
 
 /**
  * Captures primary screen and finds coordinates of target text locally via Tesseract.
@@ -54,29 +87,20 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
     return { found: false, error: 'Empty search text provided.' };
   }
 
-  if (!screenshot) {
-    logCallback('error', '[Local OCR] screenshot-desktop module missing.');
-    return { found: false, error: 'screenshot-desktop missing' };
-  }
-
-  if (!Tesseract) {
-    logCallback('error', '[Local OCR] tesseract.js module missing.');
-    return { found: false, error: 'tesseract.js missing' };
+  if (!screenshot || !Tesseract) {
+    logCallback('error', '[Local OCR] screenshot-desktop or tesseract.js missing.');
+    return { found: false, error: 'OCR modules missing' };
   }
 
   try {
     logCallback('automation', `[Local OCR] Scanning screen locally for: "${targetText}"...`);
 
-    // 1. Take a clean PNG snapshot of the primary screen locally
     const imgBuffer = await screenshot({ format: 'png' });
-
-    // 2. Process image with local Tesseract.js engine
     const { data } = await Tesseract.recognize(imgBuffer, 'eng');
 
     const words = data.words || [];
     const targetWords = target.split(/\s+/);
 
-    // Multi-word phrase matching
     if (targetWords.length > 1) {
       for (let i = 0; i <= words.length - targetWords.length; i++) {
         let match = true;
@@ -112,7 +136,6 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       }
     }
 
-    // Single-word / Substring matching
     for (const w of words) {
       const cleanWord = w.text.toLowerCase().replace(/[^\w]/g, '');
       const cleanTarget = target.replace(/[^\w]/g, '');
@@ -133,7 +156,6 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       }
     }
 
-    // Line matching fallback
     const lines = data.lines || [];
     for (const l of lines) {
       if (l.text.toLowerCase().includes(target)) {
@@ -183,7 +205,6 @@ async function typeAndSubmitText(textToType, logCallback = () => {}) {
   logCallback('automation', `[Keyboard Action] Typing: "${textToType}" & pressing Enter...`);
 
   return new Promise((resolve) => {
-    // Escape special PowerShell SendKeys characters
     const escapedText = textToType
       .replace(/([+^%~{}()[\]])/g, '{$1}')
       .replace(/'/g, "''");
@@ -454,7 +475,6 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
   logCallback('system', `Dispatching Action: [${type}]`);
 
   switch (type) {
-    // 1. Local OCR Screen Clicking & Finding
     case 'CLICK_TEXT':
     case 'CLICK_ON_TEXT':
     case 'CLICK_SCREEN_TEXT':
@@ -464,12 +484,10 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
     case 'FIND_SCREEN_TEXT':
       return await captureAndFindText(payload.text || payload.targetText || payload.label, logCallback);
 
-    // 2. Native Typing & Enter
     case 'TYPE_AND_SUBMIT':
     case 'TYPE_TEXT':
       return await typeAndSubmitText(payload.text || payload.textToType, logCallback);
 
-    // 3. Coordinate Mouse Actions
     case 'CLICK_AT':
     case 'CLICK_SCREEN':
       return await clickAt(payload.x, payload.y, payload.button || 'left', logCallback);
@@ -477,7 +495,6 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
     case 'SCROLL_SCREEN':
       return await scrollScreen(payload.direction || 'down', payload.amount || 4, logCallback);
 
-    // 4. YouTube & Search
     case 'YOUTUBE_DIRECT_PLAY':
     case 'PLAY_YOUTUBE_VIDEO':
       return await searchAndPlayYouTubeDirect(
@@ -489,7 +506,6 @@ async function executeAction(actionObj, logCallback = () => {}, mainWindow = nul
     case 'GOOGLE_CUSTOM_SEARCH':
       return await queryGoogleCustomSearch(payload.query, logCallback);
 
-    // 5. Code & Files
     case 'CREATE_FILE':
     case 'CREATE_AND_STREAM_CODE':
     case 'UPDATE_FILE_IN_PLACE':
@@ -536,6 +552,7 @@ module.exports = {
   YOUTUBE_DATA_API_KEY,
   GOOGLE_CUSTOM_SEARCH_API_KEY,
   GOOGLE_SEARCH_ENGINE_CX,
+  readEntireScreenOCR,
   captureAndFindText,
   clickOnScreenText,
   typeAndSubmitText,
