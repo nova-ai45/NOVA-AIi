@@ -14,7 +14,10 @@ const CANNED_LOOP_PATTERNS = [
   /ہائے\s*توبہ/i
 ];
 
-async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
+/**
+ * Fast retry helper with strict timeout per attempt to prevent IPC stalls
+ */
+async function retryWithBackoff(fn, maxRetries = 2, delayMs = 800) {
   let attempt = 0;
   while (attempt < maxRetries) {
     try {
@@ -39,16 +42,15 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
         throw err;
       }
 
-      const backoffDelay = initialDelayMs * Math.pow(2, attempt - 1);
-      console.warn(`[AI Engine] Network glitch detected. Reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
-      await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+      console.warn(`[AI Engine] Connection dropped (${err.message}). Retrying ${attempt}/${maxRetries} in ${delayMs}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
 
 /**
  * Persona: Boss Assistant Mode.
- * Language: Natural Urdu script for clear TTS pronunciation.
+ * Language: Natural, clean Urdu script for flawless Edge Neural TTS pronunciation.
  */
 function getSystemInstruction(isRoastMode = false) {
   const personalityCore = isRoastMode
@@ -65,28 +67,24 @@ function getSystemInstruction(isRoastMode = false) {
 ${personalityCore}
 
 =======================================================
-🚨 سکرین ریڈنگ، یوٹیوب اور ایکشنز کے سخت احکامات:
+🚨 سکرین ریڈنگ، یوٹیوب اور ایکشنز کے احکامات:
 =======================================================
 1. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
    - اگر سکرین پر کوئی تحریر موجود ہے: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
    - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
    - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
-2. جب باس کہے "نوٹ پیڈ کھولو اور فائل بناؤ":
-   - "CREATE_FILE" ایکشن استعمال کریں جس میں openNotepad: true، فائل کا نام اور کوڈ/متن شامل ہو:
-     {
-       "type": "CREATE_FILE",
-       "payload": { "filename": "index.html", "content": "...", "openNotepad": true }
-     }
-3. جب باس کہے "ایپ کھولو" (نوٹ پیڈ، کروم، کیلکولیٹر، سی ایم ڈی):
+2. جب باس کہے "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
+   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو نکال کر پلے کر دے گا۔
+3. جب باس کہے "نوٹ پیڈ کھولو اور فائل بناؤ":
+   - "CREATE_FILE" ایکشن استعمال کریں جس میں openNotepad: true، فائل کا نام اور کوڈ/متن شامل ہو۔
+4. جب باس کہے "یہ ایپ کھولو" (نوٹ پیڈ، کروم، کیلکولیٹر، سی ایم ڈی):
    - "OPEN_APP" ایکشن استعمال کریں:
      {
        "type": "OPEN_APP",
        "payload": { "name": "notepad" }
      }
-4. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
-   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں۔
 5. جب سکرین پر کسی لفظ یا بٹن پر کلک کرنے کو کہا جائے تو "CLICK_SCREEN_TEXT" استعمال کریں۔
-6. جھوٹی تصدیق ہرگز نہ کریں۔ جب تک ایکشن کا نتیجہ نہ ملے تب تک دعویٰ نہ کریں۔
+6. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
 
 ڈویلپر کا تعارف: حسنین (@TheHasnainGamer1)۔ صرف تب بتائیں جب باس واضح طور پر پوچھیں کہ آپ کو کس نے بنایا ہے۔
 
@@ -167,7 +165,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
 }
 
 /**
- * Universal Stream Runner with Grounded Pre-Execution Verification
+ * Fast In-Memory Inference Streamer with Strict 7-Second Internal Timeout Guard
  */
 async function runAIInferenceStream({
   userPrompt = '',
@@ -190,7 +188,11 @@ async function runAIInferenceStream({
   let ocrScreenText = '';
   if (isScreenQuery) {
     try {
-      ocrScreenText = await readEntireScreenOCR(logCallback);
+      // Race local OCR against a 2.5-second timeout so it never stalls the response pipeline
+      ocrScreenText = await Promise.race([
+        readEntireScreenOCR(logCallback),
+        new Promise((resolve) => setTimeout(() => resolve(''), 2500))
+      ]);
     } catch (e) {
       console.warn('[Screen OCR Failed]:', e.message);
     }
@@ -218,7 +220,6 @@ async function runAIInferenceStream({
     }
   }
 
-  // Dynamic Roast Mode parsing from settings
   const isRoastMode = Boolean(
     config.roastMode === true ||
     config.isRoastModeEnabled === true ||
@@ -251,7 +252,7 @@ async function runAIInferenceStream({
 
   let parsedResponse = null;
 
-  // 1. Google Gemini 2.0 Flash
+  // 1. Google Gemini Flash (Capped to 7.5 seconds internal budget)
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -271,7 +272,7 @@ async function runAIInferenceStream({
         systemInstruction: activeSystemInstruction,
         generationConfig: { responseMimeType: 'application/json' }
       },
-      { timeout: 90000 }
+      { timeout: 7500 }
     );
 
     try {
@@ -293,7 +294,7 @@ async function runAIInferenceStream({
           cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
         }
         return JSON.parse(cleanJson);
-      }, 3, 1000);
+      }, 2, 800);
     } catch (err) {
       if (config.openrouterKey) {
         parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
@@ -305,7 +306,7 @@ async function runAIInferenceStream({
     parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
   }
 
-  // Pre-execution Ground Truth: Execute physical actions before sending final response
+  // Pre-execution Ground Truth: Execute physical actions before resolving speech
   if (parsedResponse && parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
@@ -356,7 +357,6 @@ async function runAIInferenceStream({
     }
   }
 
-  // Handle empty screen context response
   if (isScreenQuery && (!ocrScreenText || ocrScreenText.trim().length === 0)) {
     parsedResponse.spokenResponse = "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔";
   }
@@ -368,7 +368,7 @@ async function queryOpenRouterDirect(userPrompt, imageBase64, screenContextPromp
   const client = new OpenAI({
     baseURL: 'https://openrouter.ai/api/v1',
     apiKey: config.openrouterKey,
-    timeout: 90000,
+    timeout: 7500,
     defaultHeaders: { 'HTTP-Referer': 'https://nova-ai.desktop', 'X-Title': 'NOVA AI' }
   });
 
@@ -415,7 +415,7 @@ async function queryOpenRouterDirect(userPrompt, imageBase64, screenContextPromp
       cleanJson = cleanJson.substring(firstBrace, lastBrace + 1);
     }
     return JSON.parse(cleanJson);
-  }, 3, 1000);
+  }, 2, 800);
 }
 
 module.exports = {
