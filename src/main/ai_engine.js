@@ -14,9 +14,6 @@ const CANNED_LOOP_PATTERNS = [
   /ہائے\s*توبہ/i
 ];
 
-/**
- * Automatic exponential backoff handler for network recovery.
- */
 async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
   let attempt = 0;
   while (attempt < maxRetries) {
@@ -43,17 +40,15 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
       }
 
       const backoffDelay = initialDelayMs * Math.pow(2, attempt - 1);
-      console.warn(`[AI Engine] Connection glitch detected. Reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
+      console.warn(`[AI Engine] Network glitch detected. Reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
       await new Promise((resolve) => setTimeout(resolve, backoffDelay));
     }
   }
 }
 
 /**
- * Dynamic System Instruction Generator
- * - Roast Mode ON: Sarcastic, funny, sharp Boss-Assistant banter.
- * - Roast Mode OFF: Polite, loyal, respectful, and helpful Boss-Assistant mode.
- * - Language: Natural Urdu script for clear TTS pronunciation.
+ * Persona: Boss Assistant Mode.
+ * Language: Natural Urdu script for clear TTS pronunciation.
  */
 function getSystemInstruction(isRoastMode = false) {
   const personalityCore = isRoastMode
@@ -70,23 +65,28 @@ function getSystemInstruction(isRoastMode = false) {
 ${personalityCore}
 
 =======================================================
-🚨 سکرین ریڈنگ، یوٹیوب اور ملٹی سٹیپ ایکشنز کے احکامات:
+🚨 سکرین ریڈنگ، یوٹیوب اور ایکشنز کے سخت احکامات:
 =======================================================
-1. جب باس کہے "نوٹ پیڈ کھولو اور فائل بناؤ اور سیو کرو" یا "Notepad kholo aur code likho":
-   - "CREATE_AND_STREAM_CODE" ایکشن استعمال کریں جس میں فائل کا نام اور مکمل کوڈ شامل ہو۔ یہ نوٹ پیڈ کھولے گا، اس پر کوڈ ٹائپ کرے گا اور اسے ڈیسک ٹاپ پر خودکار محفوظ کرے گا۔
-2. جب باس کہے "یہ ایپ کھولو" (مثلاً نوٹ پیڈ، کروم، کیلکولیٹر، سی ایم ڈی):
+1. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
+   - اگر سکرین پر کوئی تحریر موجود ہے: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
+   - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
+   - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
+2. جب باس کہے "نوٹ پیڈ کھولو اور فائل بناؤ":
+   - "CREATE_FILE" ایکشن استعمال کریں جس میں openNotepad: true، فائل کا نام اور کوڈ/متن شامل ہو:
+     {
+       "type": "CREATE_FILE",
+       "payload": { "filename": "index.html", "content": "...", "openNotepad": true }
+     }
+3. جب باس کہے "ایپ کھولو" (نوٹ پیڈ، کروم، کیلکولیٹر، سی ایم ڈی):
    - "OPEN_APP" ایکشن استعمال کریں:
      {
        "type": "OPEN_APP",
        "payload": { "name": "notepad" }
      }
-3. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
-   - اگر سکرین پر کوئی تحریر موجود ہے: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
-   - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
-   - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
 4. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
-   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو نکال کر پلے کر دے گا۔
-5. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
+   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں۔
+5. جب سکرین پر کسی لفظ یا بٹن پر کلک کرنے کو کہا جائے تو "CLICK_SCREEN_TEXT" استعمال کریں۔
+6. جھوٹی تصدیق ہرگز نہ کریں۔ جب تک ایکشن کا نتیجہ نہ ملے تب تک دعویٰ نہ کریں۔
 
 ڈویلپر کا تعارف: حسنین (@TheHasnainGamer1)۔ صرف تب بتائیں جب باس واضح طور پر پوچھیں کہ آپ کو کس نے بنایا ہے۔
 
@@ -167,7 +167,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
 }
 
 /**
- * Universal Stream Runner with Grounded Pre-Execution
+ * Universal Stream Runner with Grounded Pre-Execution Verification
  */
 async function runAIInferenceStream({
   userPrompt = '',
@@ -218,7 +218,7 @@ async function runAIInferenceStream({
     }
   }
 
-  // Dynamic Roast Mode toggle parsing from all possible configurations
+  // Dynamic Roast Mode parsing from settings
   const isRoastMode = Boolean(
     config.roastMode === true ||
     config.isRoastModeEnabled === true ||
@@ -333,8 +333,10 @@ async function runAIInferenceStream({
       }
 
       if (action.type === 'CREATE_FILE' || action.type === 'SAVE_FILE' || action.type === 'CREATE_AND_STREAM_CODE') {
-        if (actionResult && actionResult.success) {
-          parsedResponse.spokenResponse = `جی باس، میں نے آپ کی فائل "${action.payload.filename}" بنا دی ہے اور محفوظ کر لی ہے۔`;
+        if (actionResult && actionResult.success && actionResult.verified) {
+          parsedResponse.spokenResponse = `جی باس، میں نے ڈیسک ٹاپ پر "${action.payload.filename}" بنا دی ہے اور یہ محفوظ ہو چکی ہے۔`;
+        } else {
+          parsedResponse.spokenResponse = `باس، فائل نہیں بن سکی۔ ڈیسک ٹاپ پر لکھنے کی اجازت نہیں ملی۔`;
         }
       }
 
