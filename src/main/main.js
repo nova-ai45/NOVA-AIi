@@ -51,7 +51,7 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 let mainWindow = null;
 
 // ============================================================================
-// 🧠 PERSISTENT LOCAL MEMORY: memory.json in userData directory
+// 🧠 LOCAL PERSISTENT MEMORY: memory.json in userData directory
 // ============================================================================
 function getMemoryFilePath() {
   const userDir = app.getPath('userData');
@@ -373,8 +373,8 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir, isUpdate }) => {
-    if (!automation || !automation.liveNotepadCodeStream) return { success: false };
-    return await automation.liveNotepadCodeStream(filename, content, targetDir, isUpdate, broadcastLog, mainWindow);
+    if (!automation || !automation.createDesktopFile) return { success: false };
+    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
   });
 
   ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
@@ -382,7 +382,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master Orchestration IPC
+  // Master Command Dispatcher & Response Audio Synthesizer
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
@@ -427,13 +427,14 @@ app.whenReady().then(() => {
         mainWindow
       );
 
-      // Save turn into persistent local memory.json
+      // Persist to local memory.json
       if (aiResponse.spokenResponse) {
         globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
         globalMemoryContext.push({ role: 'model', text: aiResponse.spokenResponse });
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
+      // Generate instant TTS reply
       let audioResult = null;
       const responseToSpeak = (aiResponse.spokenResponse || '').trim();
 
