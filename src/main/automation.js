@@ -5,40 +5,20 @@ const { exec } = require('child_process');
 const https = require('https');
 
 // ============================================================================
-// 1. LOCAL SCREEN OCR & DESKTOP AUTOMATION LIBRARIES (100% LOCAL)
+// 1. LOCAL SCREEN OCR (100% LOCAL - ZERO CLOUD VISION API)
 // ============================================================================
 let screenshot = null;
 try {
   screenshot = require('screenshot-desktop');
 } catch (e) {
-  console.warn('[Local Vision] screenshot-desktop not available:', e.message);
+  console.warn('[Local Vision] screenshot-desktop not loaded:', e.message);
 }
 
 let Tesseract = null;
 try {
   Tesseract = require('tesseract.js');
 } catch (e) {
-  console.warn('[Local OCR] tesseract.js not available:', e.message);
-}
-
-let nutMouse = null;
-let nutKeyboard = null;
-let Point = null;
-let Button = null;
-let Key = null;
-
-try {
-  const nut = require('@nut-tree/nut-js');
-  nutMouse = nut.mouse;
-  nutKeyboard = nut.keyboard;
-  Point = nut.Point;
-  Button = nut.Button;
-  Key = nut.Key;
-  // Smooth humanized cursor movement speed
-  nutMouse.config.autoDelayMs = 30;
-  nutKeyboard.config.autoDelayMs = 20;
-} catch (e) {
-  console.warn('[Local Input] @nut-tree/nut-js not loaded, using Windows OS fallback.');
+  console.warn('[Local OCR] tesseract.js not loaded:', e.message);
 }
 
 // ============================================================================
@@ -62,14 +42,11 @@ function getDesktopDir() {
 let currentActiveProjectFile = null;
 
 // ============================================================================
-// 3. LOCAL SCREEN OCR & TARGET FINDING (NO EXTERNAL APIS)
+// 3. LOCAL SCREEN OCR & COORDINATE FINDING
 // ============================================================================
 
 /**
- * Captures primary screen and finds the bounding box coordinates of target text.
- * @param {string} targetText - Text to locate on screen (case-insensitive)
- * @param {function} logCallback - Logger stream
- * @returns {Promise<{ found: boolean, x: number, y: number, width: number, height: number, text: string }>}
+ * Captures primary screen and finds coordinates of target text locally via Tesseract.
  */
 async function captureAndFindText(targetText, logCallback = () => {}) {
   const target = (targetText || '').trim().toLowerCase();
@@ -88,24 +65,18 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
   }
 
   try {
-    logCallback('automation', `[Local OCR] Capturing display & scanning for: "${targetText}"...`);
+    logCallback('automation', `[Local OCR] Scanning screen locally for: "${targetText}"...`);
 
     // 1. Take a clean PNG snapshot of the primary screen locally
     const imgBuffer = await screenshot({ format: 'png' });
 
     // 2. Process image with local Tesseract.js engine
-    const { data } = await Tesseract.recognize(imgBuffer, 'eng', {
-      logger: (m) => {
-        if (m.status === 'recognizing text' && m.progress === 1) {
-          logCallback('automation', `[Local OCR] Text extraction complete.`);
-        }
-      }
-    });
+    const { data } = await Tesseract.recognize(imgBuffer, 'eng');
 
     const words = data.words || [];
     const targetWords = target.split(/\s+/);
 
-    // Search 1: Multi-word phrase matching across consecutive words
+    // Multi-word phrase matching
     if (targetWords.length > 1) {
       for (let i = 0; i <= words.length - targetWords.length; i++) {
         let match = true;
@@ -128,7 +99,7 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
           const centerX = Math.round((x0 + x1) / 2);
           const centerY = Math.round((y0 + y1) / 2);
 
-          logCallback('automation', `[Local OCR] Phrase located at (${centerX}, ${centerY}) [${x1 - x0}x${y1 - y0}]`);
+          logCallback('automation', `[Local OCR] Found at (${centerX}, ${centerY})`);
           return {
             found: true,
             x: centerX,
@@ -141,7 +112,7 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       }
     }
 
-    // Search 2: Single-word / Substring matching
+    // Single-word / Substring matching
     for (const w of words) {
       const cleanWord = w.text.toLowerCase().replace(/[^\w]/g, '');
       const cleanTarget = target.replace(/[^\w]/g, '');
@@ -162,13 +133,13 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       }
     }
 
-    // Search 3: Line matching fallback
+    // Line matching fallback
     const lines = data.lines || [];
     for (const l of lines) {
       if (l.text.toLowerCase().includes(target)) {
         const centerX = Math.round((l.bbox.x0 + l.bbox.x1) / 2);
         const centerY = Math.round((l.bbox.y0 + l.bbox.y1) / 2);
-        logCallback('automation', `[Local OCR] Line located at (${centerX}, ${centerY})`);
+        logCallback('automation', `[Local OCR] Located at (${centerX}, ${centerY})`);
         return {
           found: true,
           x: centerX,
@@ -180,7 +151,7 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
       }
     }
 
-    logCallback('warning', `[Local OCR] Text "${targetText}" not found on current screen.`);
+    logCallback('warning', `[Local OCR] "${targetText}" not found on screen.`);
     return { found: false };
   } catch (err) {
     logCallback('error', `[Local OCR Error]: ${err.message}`);
@@ -189,72 +160,113 @@ async function captureAndFindText(targetText, logCallback = () => {}) {
 }
 
 /**
- * 4. NATIVE MOUSE MOVEMENT & CLICK BY ON-SCREEN TEXT
+ * 4. NATIVE MOUSE CLICK ON SCREEN TEXT (100% NATIVE WINDOWS USER32)
  */
 async function clickOnScreenText(targetText, logCallback = () => {}) {
   const result = await captureAndFindText(targetText, logCallback);
 
   if (!result || !result.found) {
-    logCallback('warning', `[Mouse Action] Cannot click: "${targetText}" was not detected on screen.`);
+    logCallback('warning', `[Mouse Action] Cannot click: "${targetText}" was not detected.`);
     return { success: false, error: 'Text not found on screen' };
   }
 
-  logCallback('automation', `[Mouse Action] Moving cursor to (${result.x}, ${result.y}) and clicking...`);
-
-  // Preferred: Use nut.js for smooth native mouse control
-  if (nutMouse && Point) {
-    try {
-      await nutMouse.setPosition(new Point(result.x, result.y));
-      await nutMouse.leftClick();
-      logCallback('automation', `[Mouse Action] Successfully clicked on "${targetText}"`);
-      return { success: true, x: result.x, y: result.y };
-    } catch (e) {
-      console.warn('[Nut.js click failed, using Windows fallback]:', e.message);
-    }
-  }
-
-  // Fallback: Windows OS User32 mouse event
+  logCallback('automation', `[Mouse Action] Moving to (${result.x}, ${result.y}) and clicking...`);
   return await clickAt(result.x, result.y, 'left', logCallback);
 }
 
 /**
- * 5. NATIVE KEYBOARD TYPING & SUBMISSION
+ * 5. NATIVE KEYBOARD TYPING & ENTER (100% NATIVE WINDOWS POWERSHELL)
  */
 async function typeAndSubmitText(textToType, logCallback = () => {}) {
   if (!textToType) return { success: false };
 
   logCallback('automation', `[Keyboard Action] Typing: "${textToType}" & pressing Enter...`);
 
-  if (nutKeyboard && Key) {
-    try {
-      await nutKeyboard.type(textToType);
-      await nutKeyboard.pressKey(Key.Enter);
-      await nutKeyboard.releaseKey(Key.Enter);
-      logCallback('automation', `[Keyboard Action] Text typed and submitted.`);
-      return { success: true };
-    } catch (e) {
-      console.warn('[Nut.js keyboard failed, using Windows fallback]:', e.message);
-    }
-  }
-
-  // Windows PowerShell SendKeys Fallback
   return new Promise((resolve) => {
-    const escapedText = textToType.replace(/'/g, "''");
+    // Escape special PowerShell SendKeys characters
+    const escapedText = textToType
+      .replace(/([+^%~{}()[\]])/g, '{$1}')
+      .replace(/'/g, "''");
+
     const ps = `
       Add-Type -AssemblyName System.Windows.Forms;
+      Start-Sleep -Milliseconds 150;
       [System.Windows.Forms.SendKeys]::SendWait('${escapedText}');
       Start-Sleep -Milliseconds 100;
       [System.Windows.Forms.SendKeys]::SendWait('{ENTER}');
+    `;
+
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      if (err) {
+        logCallback('error', `[Keyboard Error]: ${err.message}`);
+        resolve({ success: false, error: err.message });
+      } else {
+        logCallback('automation', `[Keyboard Action] Text typed and submitted.`);
+        resolve({ success: true });
+      }
+    });
+  });
+}
+
+// ============================================================================
+// 6. NATIVE MOUSE & APP CONTROLS (USER32.DLL VIA POWERSHELL)
+// ============================================================================
+
+async function clickAt(x, y, button = 'left', logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const posX = Math.round(Number(x));
+    const posY = Math.round(Number(y));
+    const downFlag = button === 'right' ? '0x0008' : '0x0002';
+    const upFlag = button === 'right' ? '0x0010' : '0x0004';
+
+    logCallback('automation', `[Native Mouse] ${button.toUpperCase()} Click at (${posX}, ${posY})`);
+
+    const ps = `
+      Add-Type -AssemblyName System.Windows.Forms;
+      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeMouseDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeMouseDrv]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero);
+      Start-Sleep -Milliseconds 45;
+      [NativeMouseDrv]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero);
+    `;
+    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
+      resolve({ success: !err, x: posX, y: posY });
+    });
+  });
+}
+
+async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
+  return new Promise((resolve) => {
+    const isDown = direction.toLowerCase() === 'down';
+    const scrollDelta = isDown ? -120 * Math.max(1, amount) : 120 * Math.max(1, amount);
+
+    logCallback('automation', `[Native Mouse] Scroll ${direction.toUpperCase()} (${amount})`);
+
+    const ps = `
+      $code = @'
+      using System;
+      using System.Runtime.InteropServices;
+      public class NativeWheelDrv {
+          [DllImport("user32.dll")]
+          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, int dwData, UIntPtr dwExtraInfo);
+      }
+'@
+      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
+      [NativeWheelDrv]::mouse_event(0x0800, 0, 0, ${scrollDelta}, [UIntPtr]::Zero);
     `;
     exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
       resolve({ success: !err });
     });
   });
 }
-
-// ============================================================================
-// 6. EXISTING APP AUTOMATION & BROWSER CONTROLS (PRESERVED)
-// ============================================================================
 
 function launchBrowserUrl(targetUrl, browserName = 'chrome') {
   if (process.platform === 'win32' && (browserName || 'chrome').toLowerCase().includes('chrome')) {
@@ -408,76 +420,6 @@ async function queryGoogleCustomSearch(query, logCallback = () => {}) {
   });
 }
 
-async function clickAt(x, y, button = 'left', logCallback = () => {}) {
-  if (nutMouse && Point) {
-    try {
-      await nutMouse.setPosition(new Point(Math.round(x), Math.round(y)));
-      if (button === 'right') await nutMouse.rightClick();
-      else await nutMouse.leftClick();
-      return { success: true, x, y };
-    } catch (_) {}
-  }
-
-  return new Promise((resolve) => {
-    const posX = Math.round(Number(x));
-    const posY = Math.round(Number(y));
-    const downFlag = button === 'right' ? '0x0008' : '0x0002';
-    const upFlag = button === 'right' ? '0x0010' : '0x0004';
-
-    const ps = `
-      Add-Type -AssemblyName System.Windows.Forms;
-      [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${posX}, ${posY});
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeMouseDrv {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeMouseDrv]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero);
-      Start-Sleep -Milliseconds 45;
-      [NativeMouseDrv]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err, x: posX, y: posY });
-    });
-  });
-}
-
-async function scrollScreen(direction = 'down', amount = 4, logCallback = () => {}) {
-  if (nutMouse) {
-    try {
-      const scrollAmt = Math.max(1, amount) * 100;
-      if (direction === 'down') await nutMouse.scrollDown(scrollAmt);
-      else await nutMouse.scrollUp(scrollAmt);
-      return { success: true };
-    } catch (_) {}
-  }
-
-  return new Promise((resolve) => {
-    const isDown = direction.toLowerCase() === 'down';
-    const scrollDelta = isDown ? -120 * Math.max(1, amount) : 120 * Math.max(1, amount);
-
-    const ps = `
-      $code = @'
-      using System;
-      using System.Runtime.InteropServices;
-      public class NativeWheelDrv {
-          [DllImport("user32.dll")]
-          public static extern void mouse_event(uint dwFlags, uint dx, uint dy, int dwData, UIntPtr dwExtraInfo);
-      }
-'@
-      Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue;
-      [NativeWheelDrv]::mouse_event(0x0800, 0, 0, ${scrollDelta}, [UIntPtr]::Zero);
-    `;
-    exec(`powershell -NoProfile -Command "${ps.replace(/\n/g, ' ')}"`, (err) => {
-      resolve({ success: !err });
-    });
-  });
-}
-
 async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome', logCallback = () => {}) {
   try {
     let finalUrl = url || 'https://www.google.com';
@@ -505,7 +447,7 @@ async function openBrowserTarget(url, searchQuery = null, browserName = 'chrome'
 }
 
 /**
- * Universal Action Dispatcher (Updated with Local OCR & Nut.js Input Actions)
+ * Universal Action Dispatcher
  */
 async function executeAction(actionObj, logCallback = () => {}, mainWindow = null) {
   const { type, payload } = actionObj;
