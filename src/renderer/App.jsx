@@ -103,7 +103,6 @@ export default function App() {
     };
   }, []);
 
-  // براہِ راست ساؤنڈ کارڈ سے مائیکروفون سٹریمنگ
   const startDirectHardwareMicrophone = async () => {
     try {
       if (mediaStreamRef.current) return;
@@ -138,10 +137,10 @@ export default function App() {
 
       const audioTrack = stream.getAudioTracks()[0];
       const micDeviceName = audioTrack ? audioTrack.label : 'Microphone';
-      setLogs((prev) => [...prev, { timestamp: 'MIC', message: `Hardware Connected: "${micDeviceName}" [LIVE]` }]);
+      setLogs((prev) => [...prev, { timestamp: 'MIC', message: `Connected: "${micDeviceName}" [LIVE]` }]);
 
-      const SILENCE_TIMEOUT_MS = 1200; // مکمل بات کر کے 1.2 سیکنڈ خاموش ہونے پر خودکار تھنکنگ
-      const MAX_RECORD_LIMIT_MS = 8000; // 8 سیکنڈ کا فیل سیف
+      const SILENCE_TIMEOUT_MS = 1100;
+      const MAX_RECORD_LIMIT_MS = 8000;
 
       const hardwareVADLoop = () => {
         if (isProcessingRef.current || sphereState === 'speaking' || micMuted) {
@@ -156,7 +155,6 @@ export default function App() {
           audioCtx.resume();
         }
 
-        // Time-Domain RMS صوتی انرجی کی پیمائش
         analyser.getByteTimeDomainData(timeData);
         let sumSquares = 0;
         for (let i = 0; i < bufferLength; i++) {
@@ -165,7 +163,6 @@ export default function App() {
         }
         const rms = Math.sqrt(sumSquares / bufferLength);
 
-        // بیک گراؤنڈ شور اور پنکھے کو کاٹیں
         const cleanRms = Math.max(0, rms - 0.015);
         const volumePercent = Math.min(100, Math.round((cleanRms / 0.16) * 100));
 
@@ -310,7 +307,6 @@ export default function App() {
     }
   };
 
-  // نووا کی نیورل آواز بجانے کا صاف اور مستند پلیئر
   const playNeuralVoice = (base64Audio) => {
     stopOngoingSpeechPlayback();
 
@@ -325,7 +321,6 @@ export default function App() {
 
       setSphereState('speaking');
 
-      // پلے بیک کے دوران لہروں کو حرکت دیں
       const pulseInterval = setInterval(() => {
         if (activeAudioElementRef.current && !activeAudioElementRef.current.paused) {
           setAudioLevel(0.35 + Math.random() * 0.45);
@@ -346,7 +341,7 @@ export default function App() {
         onAudioFinished();
       });
     } catch (e) {
-      console.error("[Voice Playback]: Error playing audio response:", e);
+      console.error("[Voice Playback Error]:", e);
       finishExecutionTurn();
     }
   };
@@ -357,7 +352,7 @@ export default function App() {
     setAudioLevel(0);
   };
 
-  // AI کمانڈ پروسیسنگ (آواز اور ٹیکسٹ دونوں کے لیے یکساں)
+  // Main Command Pipeline (Direct Object Passing with Immediate Visual Feedback)
   const handleExecute = async (overridePrompt = null, audioPayload = null, audioMime = 'audio/webm') => {
     const prompt = (overridePrompt || inputText || '').trim();
     if (!prompt && !audioPayload) {
@@ -390,6 +385,8 @@ export default function App() {
       const spokenText = (result.spokenResponse || '').trim();
 
       if (spokenText) {
+        setLogs((prev) => [...prev, { timestamp: 'NOVA', message: spokenText }]);
+
         setChatHistory((prev) => {
           const userTurn = { role: 'user', text: prompt || '[Voice Directive]' };
           const modelTurn = { role: 'model', text: spokenText };
@@ -405,6 +402,9 @@ export default function App() {
         finishExecutionTurn();
       }
     } else {
+      if (result && result.spokenResponse) {
+        setLogs((prev) => [...prev, { timestamp: 'ERROR', message: result.spokenResponse }]);
+      }
       finishExecutionTurn();
     }
   };
@@ -509,6 +509,7 @@ export default function App() {
             </div>
           </div>
 
+          {/* Live Mic Activity Bar */}
           <div className="p-3.5 rounded-xl bg-[#121522] border border-slate-800 space-y-2">
             <div className="flex justify-between items-center text-[10px] font-mono">
               <span className="text-slate-400">VOICE INPUT</span>
@@ -546,7 +547,7 @@ export default function App() {
           <div className="z-10 mb-2 flex items-center space-x-2 px-5 py-1.5 rounded-full bg-[#121522] border border-[#ff7700]/40 text-[#ffaa00] font-mono text-xs shadow-[0_0_15px_rgba(255,119,0,0.2)]">
             <span className={`w-1.5 h-1.5 rounded-full ${sphereState === 'thinking' ? 'bg-cyan-400 animate-ping' : isSpeakingNow ? 'bg-emerald-400 animate-ping' : 'bg-[#ff8800]'}`} />
             <span className="tracking-widest uppercase">
-              ::: {sphereState === 'listening' ? (isSpeakingNow ? 'Recording Voice...' : 'Listening...') : sphereState === 'thinking' ? 'Analyzing...' : sphereState === 'speaking' ? 'Speaking Reply...' : 'Microphone Ready (Speak Anytime)'} :::
+              ::: {sphereState === 'listening' ? (isSpeakingNow ? 'Recording Voice...' : 'Listening...') : sphereState === 'thinking' ? 'Analyzing...' : sphereState === 'speaking' ? 'Speaking Reply...' : 'Microphone Ready'} :::
             </span>
           </div>
         </div>
@@ -599,7 +600,7 @@ export default function App() {
             <span className="text-emerald-400">ACTIVE</span>
           </div>
           <div className="text-[11px] font-mono text-slate-500">
-            v4.5.0 • DIRECT AUDIO DISPATCHER
+            v4.6.0 • DIRECT AUDIO DISPATCHER
           </div>
         </div>
 
