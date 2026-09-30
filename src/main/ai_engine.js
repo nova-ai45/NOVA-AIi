@@ -14,9 +14,6 @@ const CANNED_LOOP_PATTERNS = [
   /ہائے\s*توبہ/i
 ];
 
-/**
- * Robust Retry Mechanism with Exponential Backoff for Network Drops & WebSocket Reconnections
- */
 async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
   let attempt = 0;
   while (attempt < maxRetries) {
@@ -43,16 +40,12 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
       }
 
       const backoffDelay = initialDelayMs * Math.pow(2, attempt - 1);
-      console.warn(`[AI Engine] Connection glitch detected (${err.message}). Auto-reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
+      console.warn(`[AI Engine] Connection glitch (${err.message}). Auto-reconnecting in ${backoffDelay}ms...`);
       await new Promise((resolve) => setTimeout(resolve, backoffDelay));
     }
   }
 }
 
-/**
- * Persona: Boss Assistant Mode.
- * Language: Natural Urdu script for accurate neural text-to-speech pronunciation.
- */
 function getSystemInstruction(isRoastMode = false) {
   const personalityCore = isRoastMode
     ? `آپ نووا (NOVA) ہیں — باس کی تیز طرار، ہوشیار، پراعتماد اور چلبلی پرسنل اسسٹنٹ۔
@@ -91,9 +84,6 @@ STRICT JSON OUTPUT FORMAT ONLY:
 `;
 }
 
-/**
- * Sanitizes conversation history to prevent consecutive identical turns and context loops.
- */
 function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   const sanitized = [];
   let lastSeenModelText = '';
@@ -152,12 +142,10 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   return sanitized;
 }
 
-/**
- * Grounded Execution Stream with Network Drop Auto-Recovery
- */
 async function runAIInferenceStream(
   userPrompt,
   audioBase64,
+  audioMimeType = 'audio/webm',
   manualImageBase64,
   config = {},
   conversationHistory = [],
@@ -169,7 +157,6 @@ async function runAIInferenceStream(
   let imageBase64 = manualImageBase64;
   const promptText = (userPrompt || '').trim();
 
-  // Screen query intent detection
   const isScreenQuery = /\b(screen|display|desktop|سکرین|دیکھو|کیا کھلا ہے|کیا ہے|پڑھو|dekho|kya hai|kya likha)\b/i.test(promptText);
 
   let ocrScreenText = '';
@@ -209,8 +196,9 @@ async function runAIInferenceStream(
 
   const currentParts = [];
   if (audioBase64) {
+    // بالکل درست MIME Type پاس کریں تاکہ جیمنائی آواز کو 100% قبول کرے
     currentParts.push({
-      inlineData: { mimeType: 'audio/wav', data: audioBase64 }
+      inlineData: { mimeType: audioMimeType || 'audio/webm', data: audioBase64 }
     });
     currentParts.push({
       text: `صارف کی آواز کی ہدایت سنیں اور درست ایکشنز کے ساتھ اردو میں JSON جواب دیں۔ ${screenContextPrompt}`
@@ -229,7 +217,6 @@ async function runAIInferenceStream(
 
   let parsedResponse = null;
 
-  // 1. Google Gemini Flash Engine with Auto-Retry
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
@@ -263,8 +250,6 @@ async function runAIInferenceStream(
         return JSON.parse(fullText);
       }, 3, 1000);
     } catch (err) {
-      console.warn(`[AI Engine] Gemini stream failed after retries: ${err.message}. Checking failover...`);
-
       if (config.openrouterKey) {
         parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
       } else {
@@ -275,7 +260,6 @@ async function runAIInferenceStream(
     parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
   }
 
-  // Pre-execution Ground Truth: Execute physical actions before sending final response
   if (parsedResponse && parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
