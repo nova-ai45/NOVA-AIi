@@ -310,16 +310,13 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // 1. Keep-Alive / Heartbeat IPC
   ipcMain.handle('nova:ping', () => {
     return { status: 'alive', timestamp: Date.now() };
   });
 
-  // 2. Settings IPC
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
-  // 3. Hardware & Memory IPC
   ipcMain.handle('nova:getHardwareStats', async () => {
     return await fetchFullHardwareStats();
   });
@@ -334,7 +331,6 @@ app.whenReady().then(() => {
     return clearLocalPersistentMemory();
   });
 
-  // 4. Mouse & Screen Control IPCs
   ipcMain.handle('nova:clickAt', async (_, { x, y, button }) => {
     if (!automation || !automation.clickAt) return { success: false };
     return await automation.clickAt(x, y, button || 'left', broadcastLog);
@@ -350,7 +346,6 @@ app.whenReady().then(() => {
     return await automation.longPressAt(x, y, durationMs || 1200, broadcastLog);
   });
 
-  // 5. Speech & Audio Output IPC
   ipcMain.handle('nova:stopSpeech', () => {
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
@@ -370,7 +365,6 @@ app.whenReady().then(() => {
     }
   });
 
-  // 6. Screen Capture & OS Files
   ipcMain.handle('nova:captureScreen', async () => {
     try {
       if (!vision || !vision.captureActiveDisplay) return { success: false, error: 'Vision unavailable' };
@@ -391,9 +385,15 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // 7. Master AI Command Execution Pipeline (Shows "Analyzing...", matches MIME type)
-  ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, mimeType, conversationHistory, includeVision }) => {
+  // Master AI Command Execution Pipeline (Fixed Object Passing)
+  ipcMain.handle('nova:processCommand', async (_, payload) => {
     const settings = readSettings();
+
+    const text = payload?.text || '';
+    const audioBase64 = payload?.audioBase64 || null;
+    const mimeType = payload?.mimeType || 'audio/webm';
+    const conversationHistory = payload?.conversationHistory || [];
+    const includeVision = Boolean(payload?.includeVision);
 
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
@@ -407,7 +407,7 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp)\b/i.test(text || '');
+      const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp)\b/i.test(text);
       const hardwareStats = isExplicitHardwareQuery ? await fetchFullHardwareStats() : null;
 
       const historyContext = (conversationHistory && conversationHistory.length > 0)
@@ -417,7 +417,6 @@ app.whenReady().then(() => {
       if (text) {
         broadcastLog('command', `User Directive: "${text}"`);
       } else if (audioBase64) {
-        // یوزر کی ہدایت کے مطابق صرف "Analyzing..." دکھائیں
         broadcastLog('command', 'Analyzing...');
       }
 
@@ -425,36 +424,37 @@ app.whenReady().then(() => {
         throw new Error('AI Engine subsystem is unavailable.');
       }
 
+      // Safe Object Parameter Passing: eliminates positional argument swaps
       const aiResponse = await Promise.race([
-        aiEngine.runAIInferenceStream(
-          text,
+        aiEngine.runAIInferenceStream({
+          userPrompt: text,
           audioBase64,
-          mimeType || 'audio/webm', // درست فارمیٹ جیمنائی کو پاس کریں
-          visionData,
-          settings,
-          historyContext,
+          audioMimeType: mimeType,
+          manualImageBase64: visionData,
+          config: settings,
+          conversationHistory: historyContext,
           hardwareStats,
-          (streamChunk) => {
+          onChunkCallback: (streamChunk) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('nova:aiStreamChunk', streamChunk);
             }
           },
-          broadcastLog,
+          logCallback: broadcastLog,
           mainWindow
-        ),
+        }),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Inference timeout after 65 seconds')), 65000)
         )
       ]);
 
-      if (aiResponse.spokenResponse) {
+      if (aiResponse && aiResponse.spokenResponse) {
         globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
         globalMemoryContext.push({ role: 'model', text: aiResponse.spokenResponse });
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
       let audioResult = null;
-      const responseToSpeak = (aiResponse.spokenResponse || '').trim();
+      const responseToSpeak = (aiResponse?.spokenResponse || '').trim();
 
       if (settings.autoSpeak && responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
         try {
@@ -472,7 +472,7 @@ app.whenReady().then(() => {
       return {
         success: true,
         spokenResponse: responseToSpeak,
-        actions: aiResponse.actions || [],
+        actions: aiResponse?.actions || [],
         audioBase64: audioResult,
         updatedMemory: globalMemoryContext
       };
