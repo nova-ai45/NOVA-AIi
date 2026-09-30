@@ -51,14 +51,14 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 let mainWindow = null;
 
 // ============================================================================
-// 🧠 SMRITI: PERSISTENT LOCAL MEMORY STORAGE (userData/nova_memory.json)
+// 🧠 PERSISTENT LOCAL MEMORY: memory.json in userData directory
 // ============================================================================
 function getMemoryFilePath() {
   const userDir = app.getPath('userData');
   if (!fs.existsSync(userDir)) {
     fs.mkdirSync(userDir, { recursive: true });
   }
-  return path.join(userDir, 'nova_memory.json');
+  return path.join(userDir, 'memory.json');
 }
 
 function loadLocalPersistentMemory() {
@@ -71,7 +71,7 @@ function loadLocalPersistentMemory() {
     const data = JSON.parse(fs.readFileSync(memFile, 'utf-8'));
     return Array.isArray(data) ? data : [];
   } catch (e) {
-    console.warn('[Smriti Memory] Load error, resetting:', e.message);
+    console.warn('[Persistent Memory] Failed to load, resetting:', e.message);
     return [];
   }
 }
@@ -79,11 +79,11 @@ function loadLocalPersistentMemory() {
 function saveLocalPersistentMemory(history) {
   try {
     const memFile = getMemoryFilePath();
-    const sanitized = Array.isArray(history) ? history.slice(-30) : [];
+    const sanitized = Array.isArray(history) ? history.slice(-40) : [];
     fs.writeFileSync(memFile, JSON.stringify(sanitized, null, 2), 'utf-8');
     return true;
   } catch (e) {
-    console.error('[Smriti Memory] Save error:', e.message);
+    console.error('[Persistent Memory] Save failure:', e.message);
     return false;
   }
 }
@@ -98,10 +98,10 @@ function clearLocalPersistentMemory() {
   }
 }
 
-let globalSmritiContext = loadLocalPersistentMemory();
+let globalMemoryContext = loadLocalPersistentMemory();
 
 // ============================================================================
-// CONFIG SETTINGS
+// APPLICATION SETTINGS
 // ============================================================================
 const DEFAULT_SETTINGS = {
   provider: 'gemini',
@@ -109,9 +109,6 @@ const DEFAULT_SETTINGS = {
   geminiModel: 'gemini-2.0-flash',
   openrouterKey: '',
   openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
-  customBaseURL: 'https://api.groq.com/openai/v1',
-  customKey: '',
-  customModel: 'llama-3.3-70b-versatile',
   voice: 'hi-IN-SwaraNeural',
   autoSpeak: true,
   autoVision: true,
@@ -202,7 +199,7 @@ async function fetchFullHardwareStats() {
       };
     }
   } catch (e) {
-    console.warn('[Hardware] Error reading stats:', e.message);
+    console.warn('[Hardware] Telemetry error:', e.message);
   }
 
   const totalMem = os.totalmem();
@@ -286,7 +283,7 @@ function createWindow() {
   }
 
   mainWindow.on('close', () => {
-    saveLocalPersistentMemory(globalSmritiContext);
+    saveLocalPersistentMemory(globalMemoryContext);
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
     }
@@ -322,13 +319,28 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('nova:loadMemory', () => {
-    globalSmritiContext = loadLocalPersistentMemory();
-    return globalSmritiContext;
+    globalMemoryContext = loadLocalPersistentMemory();
+    return globalMemoryContext;
   });
 
   ipcMain.handle('nova:clearMemory', () => {
-    globalSmritiContext = [];
+    globalMemoryContext = [];
     return clearLocalPersistentMemory();
+  });
+
+  ipcMain.handle('nova:clickAt', async (_, { x, y, button }) => {
+    if (!automation || !automation.clickAt) return { success: false };
+    return await automation.clickAt(x, y, button || 'left', broadcastLog);
+  });
+
+  ipcMain.handle('nova:doubleClickAt', async (_, { x, y }) => {
+    if (!automation || !automation.doubleClickAt) return { success: false };
+    return await automation.doubleClickAt(x, y, broadcastLog);
+  });
+
+  ipcMain.handle('nova:longPressAt', async (_, { x, y, durationMs }) => {
+    if (!automation || !automation.longPressAt) return { success: false };
+    return await automation.longPressAt(x, y, durationMs || 1200, broadcastLog);
   });
 
   ipcMain.handle('nova:stopSpeech', () => {
@@ -370,7 +382,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master Command Dispatcher
+  // Master Orchestration IPC
   ipcMain.handle('nova:processCommand', async (_, { text, audioBase64, conversationHistory, includeVision }) => {
     const settings = readSettings();
 
@@ -386,17 +398,17 @@ app.whenReady().then(() => {
         visionData = await vision.getLatestScreenContext();
       }
 
-      const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(text || '');
+      const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp)\b/i.test(text || '');
       const hardwareStats = isExplicitHardwareQuery ? await fetchFullHardwareStats() : null;
 
       const historyContext = (conversationHistory && conversationHistory.length > 0)
         ? conversationHistory
-        : globalSmritiContext;
+        : globalMemoryContext;
 
       if (text) broadcastLog('command', `User Directive: "${text}"`);
 
       if (!aiEngine || !aiEngine.runAIInferenceStream) {
-        throw new Error('AI Engine subsystem offline.');
+        throw new Error('AI Engine subsystem is unavailable.');
       }
 
       const aiResponse = await aiEngine.runAIInferenceStream(
@@ -415,10 +427,11 @@ app.whenReady().then(() => {
         mainWindow
       );
 
+      // Save turn into persistent local memory.json
       if (aiResponse.spokenResponse) {
-        globalSmritiContext.push({ role: 'user', text: text || '[Voice Directive]' });
-        globalSmritiContext.push({ role: 'model', text: aiResponse.spokenResponse });
-        saveLocalPersistentMemory(globalSmritiContext);
+        globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
+        globalMemoryContext.push({ role: 'model', text: aiResponse.spokenResponse });
+        saveLocalPersistentMemory(globalMemoryContext);
       }
 
       let audioResult = null;
@@ -437,11 +450,11 @@ app.whenReady().then(() => {
         spokenResponse: responseToSpeak,
         actions: aiResponse.actions || [],
         audioBase64: audioResult,
-        updatedMemory: globalSmritiContext
+        updatedMemory: globalMemoryContext
       };
     } catch (err) {
       broadcastState('idle');
-      const spokenError = `Haye tauba! Ek masla aa gaya hai: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
+      const spokenError = `باس، ایک مسئلہ پیش آ گیا ہے: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
       broadcastLog('error', err.message);
 
       return {
@@ -463,6 +476,6 @@ app.on('second-instance', () => {
 });
 
 app.on('window-all-closed', () => {
-  saveLocalPersistentMemory(globalSmritiContext);
+  saveLocalPersistentMemory(globalMemoryContext);
   app.quit();
 });
