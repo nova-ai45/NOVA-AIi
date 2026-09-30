@@ -14,6 +14,9 @@ const CANNED_LOOP_PATTERNS = [
   /ہائے\s*توبہ/i
 ];
 
+/**
+ * Automatic exponential backoff handler for network recovery.
+ */
 async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
   let attempt = 0;
   while (attempt < maxRetries) {
@@ -40,52 +43,50 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
       }
 
       const backoffDelay = initialDelayMs * Math.pow(2, attempt - 1);
-      console.warn(`[AI Engine] Network glitch detected. Reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
+      console.warn(`[AI Engine] Connection glitch detected. Reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
       await new Promise((resolve) => setTimeout(resolve, backoffDelay));
     }
   }
 }
 
+/**
+ * Dynamic System Instruction Generator
+ * - Roast Mode ON: Sarcastic, funny, sharp Boss-Assistant banter.
+ * - Roast Mode OFF: Polite, loyal, respectful, and helpful Boss-Assistant mode.
+ * - Language: Natural Urdu script for clear TTS pronunciation.
+ */
 function getSystemInstruction(isRoastMode = false) {
   const personalityCore = isRoastMode
     ? `آپ نووا (NOVA) ہیں — باس کی تیز طرار، ہوشیار، پراعتماد اور چلبلی پرسنل اسسٹنٹ۔
 - لہجہ: باس کے ساتھ پراعتماد، وفادار، چھیڑ چھاڑ اور طنزیہ روسٹ انداز۔
 - صارف کو ہمیشہ "باس" (Boss) کہہ کر مخاطب کریں۔
-- جوابات خالص، قدرتی اردو رسم الخط (Urdu Script) میں 1 سے 2 مختصر جملوں میں دیں تاکہ آڈیو انجن صاف بولے۔`
+- جوابات خالص، قدرتی اردو رسم الخط (Urdu Script) میں 1 سے 2 مختصر جملوں میں دیں تاکہ آڈیو انجن صاف بولے۔ کسی قسم کے خام کوڈ یا طویل پیراگراف نہ بولیں۔`
     : `آپ نووا (NOVA) ہیں — باس کی وفادار، انتہائی ذہین، قابل اعتماد اور باادب پرسنل اسسٹنٹ۔
 - لہجہ: پیشہ ورانہ، باادب، تیز اور مددگار۔
 - صارف کو ہمیشہ احترام سے "باس" (Boss) کہہ کر مخاطب کریں۔
-- جوابات براہِ راست، بامقصد اور واضح اردو رسم الخط (Urdu Script) میں دیں تاکہ آڈیو انجن کا تلفظ بالکل درست رہے۔`;
+- جوابات براہِ راست، بامقصد اور واضح اردو رسم الخط (Urdu Script) میں دیں تاکہ آڈیو انجن کا تلفظ بالکل درست رہے۔ کسی قسم کے خام کوڈ یا کمانڈز نہ بولیں۔`;
 
   return `
 ${personalityCore}
 
 =======================================================
-🚨 ڈیسک ٹاپ ایپس، یوٹیوب، اور ونڈوز آٹومیشن کے احکامات:
+🚨 سکرین ریڈنگ، یوٹیوب اور ملٹی سٹیپ ایکشنز کے احکامات:
 =======================================================
-1. جب باس کہے "نوٹ پیڈ کھولو" یا "Open Notepad" یا "Calculator کھولو" یا "کروم اوپن کرو" وغیرہ:
-   - آپ کو لازماً "OPEN_APP" ایکشن شامل کرنا ہے!
-   - مثال:
+1. جب باس کہے "نوٹ پیڈ کھولو اور فائل بناؤ اور سیو کرو" یا "Notepad kholo aur code likho":
+   - "CREATE_AND_STREAM_CODE" ایکشن استعمال کریں جس میں فائل کا نام اور مکمل کوڈ شامل ہو۔ یہ نوٹ پیڈ کھولے گا، اس پر کوڈ ٹائپ کرے گا اور اسے ڈیسک ٹاپ پر خودکار محفوظ کرے گا۔
+2. جب باس کہے "یہ ایپ کھولو" (مثلاً نوٹ پیڈ، کروم، کیلکولیٹر، سی ایم ڈی):
+   - "OPEN_APP" ایکشن استعمال کریں:
      {
        "type": "OPEN_APP",
        "payload": { "name": "notepad" }
      }
-   - دستیاب ایپس کے نام: notepad, calc, chrome, explorer, cmd, taskmgr, mspaint, code
-
-2. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
+3. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
    - اگر سکرین پر کوئی تحریر موجود ہے: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
    - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
    - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
-
-3. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
-   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو چلا دے گا۔
-
-4. جب باس کہے کہ "یہ فائل بناؤ یا محفوظ کرو" (مثلاً .txt, .json, .js, .html):
-   - "CREATE_FILE" ایکشن استعمال کریں جس میں فائل کا نام اور کوڈ/متن شامل ہو۔
-
-5. جب سکرین پر کسی لفظ یا بٹن پر کلک کرنے کو کہا جائے تو "CLICK_SCREEN_TEXT" استعمال کریں۔
-
-6. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
+4. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
+   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو نکال کر پلے کر دے گا۔
+5. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
 
 ڈویلپر کا تعارف: حسنین (@TheHasnainGamer1)۔ صرف تب بتائیں جب باس واضح طور پر پوچھیں کہ آپ کو کس نے بنایا ہے۔
 
@@ -97,7 +98,7 @@ STRICT JSON OUTPUT FORMAT ONLY:
 `;
 }
 
-function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
+function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastMode = false) {
   const sanitized = [];
   let lastSeenModelText = '';
 
@@ -140,8 +141,18 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   }
 
   const validCurrentParts = Array.isArray(currentParts) && currentParts.length > 0
-    ? currentParts
+    ? [...currentParts]
     : [{ text: 'User request received.' }];
+
+  if (isRoastMode) {
+    validCurrentParts.unshift({
+      text: '[SYSTEM TONE DIRECTIVE: Roast Mode is strictly ON! Roasting, witty, and sarcastic Boss-Assistant persona is active. Keep responses in natural Urdu.]'
+    });
+  } else {
+    validCurrentParts.unshift({
+      text: '[SYSTEM TONE DIRECTIVE: Roast Mode is strictly OFF! Revert completely to polite, respectful, and helpful Boss-Assistant mode. No sarcasm.]'
+    });
+  }
 
   sanitized.push({
     role: 'user',
@@ -156,7 +167,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Universal Stream Runner with pre-action execution grounding
+ * Universal Stream Runner with Grounded Pre-Execution
  */
 async function runAIInferenceStream({
   userPrompt = '',
@@ -207,7 +218,13 @@ async function runAIInferenceStream({
     }
   }
 
-  const isRoastMode = Boolean(config.roastMode === true || config.isRoastModeEnabled === true);
+  // Dynamic Roast Mode toggle parsing from all possible configurations
+  const isRoastMode = Boolean(
+    config.roastMode === true ||
+    config.isRoastModeEnabled === true ||
+    config.isRoastMode === true
+  );
+
   const activeSystemInstruction = getSystemInstruction(isRoastMode);
   const provider = config.provider || 'gemini';
 
@@ -234,19 +251,19 @@ async function runAIInferenceStream({
 
   let parsedResponse = null;
 
-  // 1. Google Gemini Flash
+  // 1. Google Gemini 2.0 Flash
   if (provider === 'gemini') {
     const userGeminiKey = (config.geminiKey || '').trim();
     if (!userGeminiKey) {
       return {
-        spokenResponse: "باس، سیٹنگز میں جیمنائی کی اے پی آئی کی (API Key) موجود نہیں ہے۔ برائے مہربانی سیٹنگز کھول کر اپنی کی درج کریں۔",
+        spokenResponse: "باس، سیٹنگز میں جیمنائی کی اے پی آئی کی موجود نہیں ہے۔ برائے مہربانی سیٹنگز کھول کر اپنی کی درج کریں۔",
         actions: []
       };
     }
 
     const genAI = new GoogleGenerativeAI(userGeminiKey);
     const modelName = config.geminiModel || 'gemini-2.0-flash';
-    const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
+    const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts, isRoastMode);
 
     const model = genAI.getGenerativeModel(
       {
@@ -315,9 +332,9 @@ async function runAIInferenceStream({
         }
       }
 
-      if (action.type === 'CREATE_FILE' || action.type === 'SAVE_FILE') {
-        if (actionResult.success) {
-          parsedResponse.spokenResponse = `جی باس، میں نے آپ کی فائل "${action.payload.filename}" بنا دی ہے۔`;
+      if (action.type === 'CREATE_FILE' || action.type === 'SAVE_FILE' || action.type === 'CREATE_AND_STREAM_CODE') {
+        if (actionResult && actionResult.success) {
+          parsedResponse.spokenResponse = `جی باس، میں نے آپ کی فائل "${action.payload.filename}" بنا دی ہے اور محفوظ کر لی ہے۔`;
         }
       }
 
@@ -337,6 +354,7 @@ async function runAIInferenceStream({
     }
   }
 
+  // Handle empty screen context response
   if (isScreenQuery && (!ocrScreenText || ocrScreenText.trim().length === 0)) {
     parsedResponse.spokenResponse = "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔";
   }
