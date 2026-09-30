@@ -8,51 +8,59 @@ const CANNED_LOOP_PATTERNS = [
   /سکرین\s*دیکھ\s*سکتی\s*ہوں/i,
   /screen\s*dekh\s*sakti\s*hoon/i,
   /laptop\s*screen\s*dekh\s*sakti/i,
-  /haan\s*main\s*aapki\s*screen\s*dekh/i
+  /haan\s*main\s*aapki\s*screen\s*dekh/i,
+  /ہائے\s*اللہ/i,
+  /سنو\s*میری\s*جان/i,
+  /ہائے\s*توبہ/i
 ];
 
 /**
- * Personality: Saru / High-Emotion Serial Drama Style (سارو ڈرامہ سٹائل)
+ * Personality: Professional, sharp, loyal Boss Assistant Mode.
+ * Language: Pure, clean Urdu script to ensure flawless text-to-speech pronunciation.
  */
 function getSystemInstruction(isRoastMode = false) {
   const personalityCore = isRoastMode
-    ? `You are NOVA, speaking in the unforgettable, highly dramatic, expressive, and sarcastic "Saru Serial Drama" style (سارو ڈرامہ سٹائل).
-- Persona: Sharp, dramatic, full of theatrical sighs, hilarious complaints, and spicy taunts like an iconic serial heroine or dramatic television star!
-- Expressions to use: "Haye tauba!", "Arey baap re!", "Kasam se meri to jaan hi nikal gayi!", "Ye dekhne se pehle main andhi kyun na ho gayi!", "Arey bhai thoda sa to reham kijiye mujh par!", "Haye Allah!"
-- Match your dramatic roasts directly to the user's specific context. If they ask about code, roast their logic; if they ask about gaming, roast their aim; if they ask about their screen, roast their messy tabs. Keep it punchy, emotional, funny, and 1-2 lines.`
-    : `You are NOVA, speaking in the affectionate, deeply caring, yet delightfully theatrical and expressive "Saru Serial Drama" style (سارو ڈرامہ سٹائل).
-- Persona: Emotional, devoted, passionately expressive, sweet, and dramatic like a loving heroine from a top drama serial.
-- Expressions to use: "Haye Allah!", "Suno to sahi meri jaan!", "Arey kasam se aapki khatir to main poori duniya se lad jaoon!", "Aap hukum to kijiye!", "Dil thaam ke baithiye, ye kaam to main palak jhapakte hi kar doongi!"
-- Always speak in fluent, natural, expressive Urdu / Roman Urdu.`;
+    ? `آپ نووا (NOVA) ہیں — باس کی ذاتی، تیز رفتار، ذہین اور چلبلی اسسٹنٹ۔
+- لہجہ: باس کے ساتھ وفادار، پراعتماد، ہلکی پھلکی چھیڑ چھاڑ اور طنزیہ انداز۔
+- صارف کو ہمیشہ "باس" (Boss) کہہ کر مخاطب کریں۔
+- کسی بھی صورت غیر ضروری ڈرامائی یا جذباتی جملے (جیسے "ہائے اللہ", "سنو میری جان") استعمال نہ کریں۔
+- جوابات 1 سے 2 مختصر جملوں میں، اور خالص اردو رسم الخط (Urdu Script) میں دیں تاکہ آواز بالکل صاف سنائی دے۔`
+    : `آپ نووا (NOVA) ہیں — باس کی قابل اعتماد، وفادار، ہوشیار اور باادب پرسنل اسسٹنٹ۔
+- لہجہ: انتہائی پیشہ ورانہ، مودب، مددگار اور تیز۔
+- صارف کو ہمیشہ احترام سے "باس" (Boss) کہہ کر مخاطب کریں۔
+- کسی بھی قسم کے روایتی یا سست ڈرامائی جملے (جیسے "ہائے اللہ", "سنو میری جان") ہرگز استعمال نہ کریں۔
+- جوابات براہِ راست، بامقصد اور واضح اردو رسم الخط (Urdu Script) میں دیں تاکہ آواز کا انجن صحیح تلفظ کے ساتھ ادا کر سکے۔`;
 
   return `
 ${personalityCore}
 
 =======================================================
-🚨 CRITICAL TRUTH & REAL EXECUTION MANDATE:
+🚨 سکرین ریڈنگ اور ایکشنز کے سخت احکامات:
 =======================================================
-1. NEVER lie or make false verbal promises. NEVER say "Maine click kar diya" or "Main search kar rahi hoon" unless you actually emit the action and it succeeds!
-2. If clicking on screen text is requested, emit "CLICK_SCREEN_TEXT".
-3. If playing a song/video or verifying a site/search, emit "YOUTUBE_DIRECT_PLAY" or "VERIFY_WEB".
-4. When writing or updating a project/code, emit "CREATE_FILE" or "CREATE_AND_STREAM_CODE" with "filename" and "content".
-5. For casual banter, chit-chat, or opinions: return "actions": [].
-6. NEVER repeat generic canned phrases like "Haan main aapki screen dekh sakti hoon". Respond directly to the actual on-screen context!
+1. جھوٹ یا فرضی دعوے ہرگز نہ کریں۔ جب تک کوئی ایکشن مکمل نہ ہو، کبھی نہ کہیں کہ "میں نے کر دیا"۔
+2. سکرین پر کیا ہے جاننے کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو پڑھیں۔
+   - اگر سکرین پر کچھ لکھا ہے، تو مختصر بتائیں: "جی باس، سکرین پر مجھے یہ مواد ملا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
+   - اگر سکرین پر کوئی واضح ٹیکسٹ نہ ہو، تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
+   - کبھی بھی خود سے اندازہ لگا کر یہ نہ کہیں کہ یوٹیوب کھلا ہے جب کہ وہ نہ کھلا ہو۔
+3. سکرین کے کسی لفظ یا بٹن پر کلک کرنے کے لیے "CLICK_SCREEN_TEXT" استعمال کریں۔
+4. گانا یا ویڈیو چلانے کے لیے "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں۔
+5. کوڈ یا فائل بنانے کے لیے "CREATE_FILE" یا "CREATE_AND_STREAM_CODE" استعمال کریں۔
+6. عام بات چیت کے وقت ایکشنز کی لسٹ خالی [] رکھیں۔
 
-CREATOR: Hasnain (@TheHasnainGamer1). Mention Hasnain ONLY if directly asked who created or developed you.
+ڈویلپر کا تعارف: حسنین (@TheHasnainGamer1)۔ صرف تب بتائیں جب باس واضح طور پر پوچھیں کہ آپ کو کس نے بنایا ہے۔
 
 STRICT JSON OUTPUT FORMAT ONLY:
 {
-  "spokenResponse": "Expressive Saru drama dialogue here...",
+  "spokenResponse": "جی باس، میں نے کام مکمل کر دیا ہے۔",
   "actions": []
 }
 `;
 }
 
 /**
- * Sanitizes multi-turn chat history to strictly alternate between user and model
- * and prunes loop triggers so context never freezes.
+ * Sanitizes multi-turn chat history to strictly alternate between user and model.
  */
-function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastMode = false) {
+function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
   const sanitized = [];
   let lastSeenModelText = '';
 
@@ -60,7 +68,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
     for (const turn of rawHistory) {
       if (!turn) continue;
       const text = (turn.text || turn.content || '').trim();
-      if (!text || text.includes('[Voice Directive]') || text.includes('آپ کیا پوچھنا چاہتے ہیں')) continue;
+      if (!text || text.includes('[Voice Directive]')) continue;
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
 
@@ -98,12 +106,6 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
     ? [...currentParts]
     : [{ text: 'User request received.' }];
 
-  if (!isRoastMode) {
-    validCurrentParts.unshift({
-      text: '[SYSTEM TONE DIRECTIVE: Roast Mode is strictly OFF. Ignore any previous sarcastic tone. Respond warmly and politely.]'
-    });
-  }
-
   sanitized.push({
     role: 'user',
     parts: validCurrentParts
@@ -117,7 +119,8 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts, isRoastM
 }
 
 /**
- * Two-Pass Grounded Execution Engine with Saru Serial Persona
+ * Two-Pass Execution Pipeline:
+ * Dispatches physical actions first, then formats the verified truth response.
  */
 async function runAIInferenceStream(
   userPrompt,
@@ -133,7 +136,8 @@ async function runAIInferenceStream(
   let imageBase64 = manualImageBase64;
   const promptText = (userPrompt || '').trim();
 
-  const isScreenQuery = /\b(screen|display|desktop|dekh sakti|dekh sakte|kya likha|kya chal raha|padho|read screen|kya dikh raha|kya hai screen|nazar aa raha|samne kya hai)\b/i.test(promptText);
+  // Screen query intent detection
+  const isScreenQuery = /\b(screen|display|desktop|سکرین|دیکھو|کیا کھلا ہے|کیا ہے|پڑھو|dekho|kya hai|kya likha)\b/i.test(promptText);
 
   let ocrScreenText = '';
   if (isScreenQuery) {
@@ -145,21 +149,25 @@ async function runAIInferenceStream(
     try {
       imageBase64 = await getLatestScreenContext();
     } catch (_) {}
-  } else if (!imageBase64 && promptText && (promptText.toLowerCase().includes('click') || promptText.toLowerCase().includes('scroll') || promptText.toLowerCase().includes('dekho'))) {
+  } else if (!imageBase64 && promptText && (promptText.toLowerCase().includes('click') || promptText.toLowerCase().includes('scroll'))) {
     try {
       imageBase64 = await getLatestScreenContext();
     } catch (_) {}
   }
 
-  const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|laptop status|system stats|hardware|processor)\b/i.test(promptText);
+  const isExplicitHardwareQuery = /\b(battery|charge|charging|cpu|ram|memory|temperature|temp|بیٹری|چارجنگ)\b/i.test(promptText);
   let hardwareContext = '';
   if (isExplicitHardwareQuery && hardwareStats) {
     hardwareContext = `\n[BATTERY: ${hardwareStats.battery.percent}%, CPU: ${hardwareStats.cpu.loadPercent}%]\n`;
   }
 
   let screenContextPrompt = '';
-  if (ocrScreenText) {
-    screenContextPrompt = `\n[LIVE LOCAL OCR SCREEN TEXT EXTRACTED: "${ocrScreenText}"]\n`;
+  if (isScreenQuery) {
+    if (ocrScreenText && ocrScreenText.trim().length > 0) {
+      screenContextPrompt = `\n[LIVE LOCAL OCR SCREEN TEXT EXTRACTED: "${ocrScreenText}"]\n`;
+    } else {
+      screenContextPrompt = `\n[LIVE LOCAL OCR SCREEN TEXT EXTRACTED: "EMPTY_NO_TEXT_FOUND"]\n`;
+    }
   }
 
   const isRoastMode = Boolean(config.roastMode === true || config.isRoastModeEnabled === true);
@@ -172,7 +180,7 @@ async function runAIInferenceStream(
       inlineData: { mimeType: 'audio/wav', data: audioBase64 }
     });
     currentParts.push({
-      text: `Listen to user voice recording. Understand language automatically. Output strict JSON with genuine actions. ${screenContextPrompt}`
+      text: `صارف کی آواز کی ہدایت سنیں اور درست ایکشنز کے ساتھ اردو میں JSON جواب دیں۔ ${screenContextPrompt}`
     });
   }
 
@@ -197,7 +205,7 @@ async function runAIInferenceStream(
 
     const genAI = new GoogleGenerativeAI(userGeminiKey);
     const modelName = config.geminiModel || 'gemini-2.0-flash';
-    const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts, isRoastMode);
+    const sanitizedContents = sanitizeConversationHistoryForGemini(conversationHistory, currentParts);
 
     const model = genAI.getGenerativeModel(
       {
@@ -238,42 +246,41 @@ async function runAIInferenceStream(
   }
 
   // =========================================================================
-  // 🚨 PRE-EXECUTION GROUNDING: Execute actions BEFORE finalizing response
+  // PRE-EXECUTION GROUND TRUTH (Execute actual functions before returning)
   // =========================================================================
   if (parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
 
-      // Truth-grounding for screen clicking
+      // Verified click feedback
       if (action.type === 'CLICK_SCREEN_TEXT' || action.type === 'CLICK_TEXT') {
         if (!actionResult.success || actionResult.executed === false) {
-          parsedResponse.spokenResponse = isRoastMode
-            ? `Haye tauba! Screen par mujhe "${action.payload.text || 'yeh button'}" kahin nahi mila! Thoda aankhein khol kar bataiye kahan hai!`
-            : `Haye Allah! Screen par mujhe "${action.payload.text || 'yeh lafz'}" nahi mila. Kripya dekh lijiye screen par wo theek se khula hai ya nahi.`;
+          parsedResponse.spokenResponse = `باس، سکرین پر مجھے "${action.payload.text || 'مطلوبہ بٹن'}" نظر نہیں آیا۔`;
         } else {
-          parsedResponse.spokenResponse = isRoastMode
-            ? `Ye lijiye janaab, click kar diya hai! Ab shanti mili aapko?`
-            : `Haye kasam se, maine screen par theek jagah click kar diya hai!`;
+          parsedResponse.spokenResponse = `جی باس، میں نے سکرین پر مطلوبہ جگہ کلک کر دیا ہے۔`;
         }
       }
 
-      // Truth-grounding for YouTube Direct Playback
+      // Verified YouTube Playback feedback
       if (action.type === 'YOUTUBE_DIRECT_PLAY' || action.type === 'PLAY_YOUTUBE_VIDEO') {
         if (actionResult.success && actionResult.videoTitle) {
-          parsedResponse.spokenResponse = isRoastMode
-            ? `Lo chala di aapki video: "${actionResult.videoTitle}"! Ab chup chaap baith kar dekhiye!`
-            : `Haye kya baat hai! Maine aapke liye "${actionResult.videoTitle}" chala di hai meri jaan!`;
+          parsedResponse.spokenResponse = `جی باس، میں نے ویڈیو چلا دی ہے: ${actionResult.videoTitle}`;
         }
       }
 
-      // Truth-grounding for Web / Fact Verification
+      // Verified Web fact check
       if (action.type === 'VERIFY_WEB' || action.type === 'GOOGLE_CUSTOM_SEARCH') {
         if (actionResult.success && actionResult.items && actionResult.items.length > 0) {
           const topItem = actionResult.items[0];
-          parsedResponse.spokenResponse = `Suno to sahi! Maine internet par verify kiya hai: ${topItem.title} - ${topItem.snippet.slice(0, 100)}...`;
+          parsedResponse.spokenResponse = `جی باس، مجھے معلوم ہوا ہے کہ: ${topItem.title} - ${topItem.snippet.slice(0, 90)}`;
         }
       }
     }
+  }
+
+  // Handle empty screen check verification
+  if (isScreenQuery && (!ocrScreenText || ocrScreenText.trim().length === 0)) {
+    parsedResponse.spokenResponse = "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔";
   }
 
   return parsedResponse;
@@ -301,12 +308,10 @@ async function queryOpenRouterDirect(userPrompt, imageBase64, screenContextPromp
     });
   }
 
-  const userContent = `${userPrompt || 'Respond directly.'} ${screenContextPrompt || ''}`.trim();
+  const userContent = `${userPrompt || 'ہدایت پر عمل کریں۔'} ${screenContextPrompt || ''}`.trim();
   messages.push({
     role: 'user',
-    content: !isRoastMode
-      ? `[SYSTEM DIRECTIVE: Roast Mode is strictly OFF. Speak with warmth and politeness.] ${userContent}`
-      : userContent
+    content: userContent
   });
 
   const stream = await client.chat.completions.create({
