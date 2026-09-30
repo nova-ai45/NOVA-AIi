@@ -40,7 +40,7 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelayMs = 1200) {
       }
 
       const backoffDelay = initialDelayMs * Math.pow(2, attempt - 1);
-      console.warn(`[AI Engine] Connection glitch (${err.message}). Auto-reconnecting in ${backoffDelay}ms...`);
+      console.warn(`[AI Engine] Network glitch detected. Reconnecting in ${backoffDelay}ms (Attempt ${attempt}/${maxRetries})...`);
       await new Promise((resolve) => setTimeout(resolve, backoffDelay));
     }
   }
@@ -61,18 +61,31 @@ function getSystemInstruction(isRoastMode = false) {
 ${personalityCore}
 
 =======================================================
-🚨 سکرین ریڈنگ، یوٹیوب اور ایکشنز کے احکامات:
+🚨 ڈیسک ٹاپ ایپس، یوٹیوب، اور ونڈوز آٹومیشن کے احکامات:
 =======================================================
-1. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
-   - اگر سکرین پر کوئی تحریر یا ونڈو موجود ہے تو بتائیں: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
-   - اگر سکرین پر کوئی واضح ٹیکسٹ نہ ہو، تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
+1. جب باس کہے "نوٹ پیڈ کھولو" یا "Open Notepad" یا "Calculator کھولو" یا "کروم اوپن کرو" وغیرہ:
+   - آپ کو لازماً "OPEN_APP" ایکشن شامل کرنا ہے!
+   - مثال:
+     {
+       "type": "OPEN_APP",
+       "payload": { "name": "notepad" }
+     }
+   - دستیاب ایپس کے نام: notepad, calc, chrome, explorer, cmd, taskmgr, mspaint, code
+
+2. سکرین پر کیا کھلا ہے اس کے لیے دی گئی معلومات [LIVE LOCAL OCR SCREEN TEXT EXTRACTED] کو بغور پڑھیں۔
+   - اگر سکرین پر کوئی تحریر موجود ہے: "جی باس، سکرین پر مجھے یہ نظر آ رہا ہے: [مختصر خلاصہ]۔ کیا حکم ہے؟"
+   - اگر سکرین خالی ہو یا ٹیکسٹ نہ ملے تو سچ بتائیں: "باس، سکرین پر مجھے واضح ٹیکسٹ نظر نہیں آ رہا۔"
    - کبھی بھی بنا دیکھے خود سے یہ اندازہ نہ لگائیں کہ یوٹیوب کھلا ہے جب تک سکرین ٹیکسٹ میں اس کا ثبوت نہ ہو۔
-2. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
-   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو آئی ڈی نکال کر چلا دے گا۔
-3. جب باس کہے کہ "یہ فائل بناؤ یا محفوظ کرو" (مثلاً .txt, .json, .js, .html):
+
+3. جب باس کہے کہ "یوٹیوب پر [X] چلاؤ یا سرچ کرو":
+   - "YOUTUBE_DIRECT_PLAY" ایکشن استعمال کریں اور گانے یا ویڈیو کا نام query میں دیں۔ سسٹم خود ویڈیو چلا دے گا۔
+
+4. جب باس کہے کہ "یہ فائل بناؤ یا محفوظ کرو" (مثلاً .txt, .json, .js, .html):
    - "CREATE_FILE" ایکشن استعمال کریں جس میں فائل کا نام اور کوڈ/متن شامل ہو۔
-4. جب سکرین پر کسی لفظ یا بٹن پر کلک کرنے کو کہا جائے تو "CLICK_SCREEN_TEXT" استعمال کریں۔
-5. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
+
+5. جب سکرین پر کسی لفظ یا بٹن پر کلک کرنے کو کہا جائے تو "CLICK_SCREEN_TEXT" استعمال کریں۔
+
+6. عام بات چیت کے دوران ایکشنز کی لسٹ خالی [] رکھیں۔
 
 ڈویلپر کا تعارف: حسنین (@TheHasnainGamer1)۔ صرف تب بتائیں جب باس واضح طور پر پوچھیں کہ آپ کو کس نے بنایا ہے۔
 
@@ -92,7 +105,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
     for (const turn of rawHistory) {
       if (!turn) continue;
       const text = (turn.text || turn.content || '').trim();
-      if (!text || text.includes('[Voice Directive]') || text.includes('آپ کیا پوچھنا چاہتے ہیں')) continue;
+      if (!text || text.includes('[Voice Directive]')) continue;
 
       const role = turn.role === 'model' || turn.role === 'assistant' ? 'model' : 'user';
 
@@ -143,7 +156,7 @@ function sanitizeConversationHistoryForGemini(rawHistory, currentParts) {
 }
 
 /**
- * Robust AI Inference Runner with Object Parameters to Prevent Argument Swaps
+ * Universal Stream Runner with pre-action execution grounding
  */
 async function runAIInferenceStream({
   userPrompt = '',
@@ -200,7 +213,6 @@ async function runAIInferenceStream({
 
   const currentParts = [];
 
-  // Pass audio if present
   if (audioBase64) {
     currentParts.push({
       inlineData: { mimeType: audioMimeType || 'audio/webm', data: audioBase64 }
@@ -276,10 +288,18 @@ async function runAIInferenceStream({
     parsedResponse = await queryOpenRouterDirect(promptText, imageBase64, screenContextPrompt, config, conversationHistory, isRoastMode, onChunkCallback);
   }
 
-  // Execute OS actions
+  // Pre-execution Ground Truth: Execute physical actions before sending final response
   if (parsedResponse && parsedResponse.actions && Array.isArray(parsedResponse.actions) && parsedResponse.actions.length > 0) {
     for (const action of parsedResponse.actions) {
       const actionResult = await executeAction(action, logCallback, mainWindow);
+
+      if (action.type === 'OPEN_APP' || action.type === 'LAUNCH_APP') {
+        if (actionResult && actionResult.success) {
+          parsedResponse.spokenResponse = `جی باس، میں نے ${actionResult.appName || 'ایپ'} اوپن کر دیا ہے۔`;
+        } else {
+          parsedResponse.spokenResponse = `باس، ${actionResult?.appName || 'ایپ'} کھولنے میں مسئلہ آیا ہے۔ شاید یہ انسٹال نہیں ہے۔`;
+        }
+      }
 
       if (action.type === 'CLICK_SCREEN_TEXT' || action.type === 'CLICK_TEXT') {
         if (!actionResult.success || actionResult.executed === false) {
