@@ -51,7 +51,7 @@ try { aiEngine = require('./ai_engine'); } catch (e) { logEmergencyCrash('AI Loa
 let mainWindow = null;
 
 // ============================================================================
-// 🧠 LOCAL PERSISTENT MEMORY: memory.json in userData directory
+// 🧠 PERSISTENT LOCAL MEMORY: memory.json in userData directory
 // ============================================================================
 function getMemoryFilePath() {
   const userDir = app.getPath('userData');
@@ -310,13 +310,16 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  // 1. Keep-Alive / Heartbeat IPC to eliminate idle drops
   ipcMain.handle('nova:ping', () => {
     return { status: 'alive', timestamp: Date.now() };
   });
 
+  // 2. Settings IPC
   ipcMain.handle('nova:getSettings', () => readSettings());
   ipcMain.handle('nova:saveSettings', (_, data) => writeSettings(data));
 
+  // 3. Hardware & Memory IPC
   ipcMain.handle('nova:getHardwareStats', async () => {
     return await fetchFullHardwareStats();
   });
@@ -331,6 +334,7 @@ app.whenReady().then(() => {
     return clearLocalPersistentMemory();
   });
 
+  // 4. Mouse & Screen Control IPCs
   ipcMain.handle('nova:clickAt', async (_, { x, y, button }) => {
     if (!automation || !automation.clickAt) return { success: false };
     return await automation.clickAt(x, y, button || 'left', broadcastLog);
@@ -346,6 +350,7 @@ app.whenReady().then(() => {
     return await automation.longPressAt(x, y, durationMs || 1200, broadcastLog);
   });
 
+  // 5. Speech & Audio Output IPC
   ipcMain.handle('nova:stopSpeech', () => {
     if (ttsEngine && ttsEngine.cancelActiveTTS) {
       ttsEngine.cancelActiveTTS();
@@ -365,6 +370,7 @@ app.whenReady().then(() => {
     }
   });
 
+  // 6. Screen Capture & OS Files
   ipcMain.handle('nova:captureScreen', async () => {
     try {
       if (!vision || !vision.captureActiveDisplay) return { success: false, error: 'Vision unavailable' };
@@ -376,8 +382,8 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('nova:createFile', async (_, { filename, content, targetDir, isUpdate }) => {
-    if (!automation || !automation.createDesktopFile) return { success: false };
-    return await automation.createDesktopFile(filename, content, targetDir, broadcastLog);
+    if (!automation || !automation.liveNotepadCodeStream) return { success: false };
+    return await automation.liveNotepadCodeStream(filename, content, targetDir, isUpdate, broadcastLog, mainWindow);
   });
 
   ipcMain.handle('nova:openBrowser', async (_, { url, searchQuery, browser }) => {
@@ -385,7 +391,7 @@ app.whenReady().then(() => {
     return await automation.openBrowserTarget(url, searchQuery, browser || 'chrome', broadcastLog);
   });
 
-  // Master AI Command Execution Pipeline (Voice-First Audio Execution)
+  // 7. Master AI Command Execution Pipeline (Strict 10s Timeout & Voice Playback Enforcer)
   ipcMain.handle('nova:processCommand', async (_, payload) => {
     const settings = readSettings();
 
@@ -432,6 +438,7 @@ app.whenReady().then(() => {
         throw new Error('AI Engine subsystem is unavailable.');
       }
 
+      // Strict 10-Second Watchdog: Unfreezes the pipeline immediately if inference takes too long
       const aiResponse = await Promise.race([
         aiEngine.runAIInferenceStream({
           userPrompt: text,
@@ -450,57 +457,65 @@ app.whenReady().then(() => {
           mainWindow
         }),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Inference timeout after 65 seconds')), 65000)
+          setTimeout(() => reject(new Error('TIMEOUT_10S')), 10000)
         )
       ]);
 
       const responseToSpeak = (aiResponse?.spokenResponse || '').trim();
 
-      // Save to memory.json for context continuity
+      // Save valid interactions into persistent memory.json
       if (responseToSpeak) {
         globalMemoryContext.push({ role: 'user', text: text || '[Voice Directive]' });
         globalMemoryContext.push({ role: 'model', text: responseToSpeak });
         saveLocalPersistentMemory(globalMemoryContext);
       }
 
-      // Convert response to Edge Neural Audio (ur-PK-UzmaNeural / hi-IN-SwaraNeural)
+      // Convert text response into neural audio stream with quick 3.5s budget
       let audioResult = null;
       if (responseToSpeak && ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
         try {
-          audioResult = await ttsEngine.synthesizeNeuralSpeech(
-            responseToSpeak,
-            settings.voice || 'ur-PK-UzmaNeural'
-          );
+          audioResult = await Promise.race([
+            ttsEngine.synthesizeNeuralSpeech(responseToSpeak, settings.voice || 'ur-PK-UzmaNeural'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('TTS_TIMEOUT')), 3500))
+          ]);
         } catch (ttsErr) {
           console.warn('[Main TTS Error]:', ttsErr.message);
         }
       }
 
-      broadcastState('idle');
+      // Instantly dispatch audio chunk to renderer for automatic speaker playback
+      if (audioResult && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('nova:playAudio', audioResult);
+      }
 
-      // VOICE-ONLY CHAT WINDOW REQUIREMENT:
-      // Return empty spokenResponse to the UI chat stream so text is not printed in the chat box.
-      // The AI response is delivered purely through the audio speakers via audioBase64.
+      broadcastState(audioResult ? 'speaking' : 'idle');
+
       return {
         success: true,
-        spokenResponse: '', // Hides AI text responses from appearing in the user chat feed
+        spokenResponse: '', // Keeps user chat UI clean (voice-only mode)
         actions: aiResponse?.actions || [],
         audioBase64: audioResult,
         updatedMemory: globalMemoryContext
       };
     } catch (err) {
       broadcastState('idle');
-      const spokenError = `باس، ایک مسئلہ پیش آ گیا ہے: ${err.message.replace(/https?:\/\/[^\s]+/g, '')}`;
-      broadcastLog('error', err.message);
+      console.warn('[ProcessCommand Guard Triggered]:', err.message);
 
+      // Fast fallback response to prevent silent freezes
+      const fallbackUrdu = "باس، نیٹ ورک سست ہے، دوبارہ بولیں۔";
       let errorAudio = null;
+
       if (ttsEngine && ttsEngine.synthesizeNeuralSpeech) {
         try {
-          errorAudio = await ttsEngine.synthesizeNeuralSpeech(
-            spokenError,
-            settings.voice || 'ur-PK-UzmaNeural'
-          );
+          errorAudio = await Promise.race([
+            ttsEngine.synthesizeNeuralSpeech(fallbackUrdu, settings.voice || 'ur-PK-UzmaNeural'),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('TTS_TIMEOUT')), 2000))
+          ]);
         } catch (_) {}
+      }
+
+      if (errorAudio && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('nova:playAudio', errorAudio);
       }
 
       return {
